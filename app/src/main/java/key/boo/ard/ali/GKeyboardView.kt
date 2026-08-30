@@ -13,20 +13,15 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
 
     interface OnKeyClickListener {
         fun onKeyClicked(code: Int)
+        fun onKeyLongPressed(code: Int): Boolean // true یعنی مصرف شد، دیگه tap عادی اجرا نشه
     }
 
     var keyboard: Keyboard? = null
-        set(value) {
-            field = value
-            requestLayout()
-            invalidate()
-        }
+        set(value) { field = value; requestLayout(); invalidate() }
 
     var listener: OnKeyClickListener? = null
-
     private val handler = Handler(Looper.getMainLooper())
 
-    // استایل
     private var bgBitmap: Bitmap? = null
     private var bgColor: Int = Color.parseColor("#E6E8EB")
     private var keyIdleBitmap: Bitmap? = null
@@ -37,16 +32,17 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
     private var textSizePx: Float = 46f
     private var labelOverrides: Map<Int, String> = emptyMap()
 
-    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        textAlign = Paint.Align.CENTER
-    }
+    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
     private val keyPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val highlightPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
     private var pressedKey: Keyboard.Key? = null
     private var highlightRect: RectF? = null
-
     private var repeatRunnable: Runnable? = null
+    private var longPressRunnable: Runnable? = null
+    private var longPressConsumed = false
+
+    init { setLayerType(LAYER_TYPE_HARDWARE, null) } // رندر سریع‌تر، بدون افت فریم
 
     fun setStyle(
         bgBitmap: Bitmap?, bgColor: Int,
@@ -56,14 +52,10 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
         labelOverrides: Map<Int, String>,
         highlightColor: Int
     ) {
-        this.bgBitmap = bgBitmap
-        this.bgColor = bgColor
-        this.keyIdleBitmap = keyIdleBitmap
-        this.keyIdleColor = keyIdleColor
-        this.keyClickBitmap = keyClickBitmap
-        this.keyClickColor = keyClickColor
-        this.textColor = textColor
-        this.textSizePx = textSizePx
+        this.bgBitmap = bgBitmap; this.bgColor = bgColor
+        this.keyIdleBitmap = keyIdleBitmap; this.keyIdleColor = keyIdleColor
+        this.keyClickBitmap = keyClickBitmap; this.keyClickColor = keyClickColor
+        this.textColor = textColor; this.textSizePx = textSizePx
         this.labelOverrides = labelOverrides
         highlightPaint.color = highlightColor
         invalidate()
@@ -74,10 +66,7 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
         invalidate()
     }
 
-    fun clearHighlight() {
-        highlightRect = null
-        invalidate()
-    }
+    fun clearHighlight() { highlightRect = null; invalidate() }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val width = MeasureSpec.getSize(widthMeasureSpec)
@@ -89,39 +78,25 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
         super.onDraw(canvas)
         val kb = keyboard ?: return
 
-        // پس‌زمینه کل کیبورد
-        if (bgBitmap != null) {
-            drawBitmapCover(canvas, bgBitmap!!, RectF(0f, 0f, width.toFloat(), height.toFloat()), 0f)
-        } else {
-            canvas.drawColor(bgColor)
-        }
+        if (bgBitmap != null) drawBitmapCover(canvas, bgBitmap!!, RectF(0f, 0f, width.toFloat(), height.toFloat()), 0f)
+        else canvas.drawColor(bgColor)
 
         textPaint.textSize = textSizePx
         textPaint.color = textColor
 
         for (key in kb.keys) {
             val isPressed = key === pressedKey
-            val rect = RectF(
-                (key.x + 2).toFloat(), (key.y + 3).toFloat(),
-                (key.x + key.width - 2).toFloat(), (key.y + key.height - 3).toFloat()
-            )
-
+            val rect = RectF((key.x + 2).toFloat(), (key.y + 3).toFloat(), (key.x + key.width - 2).toFloat(), (key.y + key.height - 3).toFloat())
             val bmp = if (isPressed) keyClickBitmap else keyIdleBitmap
             val color = if (isPressed) keyClickColor else keyIdleColor
 
-            if (bmp != null) {
-                drawBitmapCover(canvas, bmp, rect, 14f)
-            } else {
-                keyPaint.color = color
-                canvas.drawRoundRect(rect, 14f, 14f, keyPaint)
-            }
+            if (bmp != null) drawBitmapCover(canvas, bmp, rect, 14f)
+            else { keyPaint.color = color; canvas.drawRoundRect(rect, 14f, 14f, keyPaint) }
 
             if (key.icon != null) {
                 val icon = key.icon
-                val iw = icon.intrinsicWidth
-                val ih = icon.intrinsicHeight
-                val left = key.x + (key.width - iw) / 2
-                val top = key.y + (key.height - ih) / 2
+                val iw = icon.intrinsicWidth; val ih = icon.intrinsicHeight
+                val left = key.x + (key.width - iw) / 2; val top = key.y + (key.height - ih) / 2
                 icon.setBounds(left, top, left + iw, top + ih)
                 icon.setTint(textColor)
                 icon.draw(canvas)
@@ -135,65 +110,70 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
                 }
             }
         }
-
         highlightRect?.let { canvas.drawRoundRect(it, 12f, 12f, highlightPaint) }
     }
 
     private fun drawBitmapCover(canvas: Canvas, bmp: Bitmap, rect: RectF, radius: Float) {
         canvas.save()
-        val path = Path()
-        path.addRoundRect(rect, radius, radius, Path.Direction.CW)
+        val path = Path(); path.addRoundRect(rect, radius, radius, Path.Direction.CW)
         canvas.clipPath(path)
-
         val scale = maxOf(rect.width() / bmp.width, rect.height() / bmp.height)
-        val scaledW = bmp.width * scale
-        val scaledH = bmp.height * scale
+        val scaledW = bmp.width * scale; val scaledH = bmp.height * scale
         val left = rect.left + (rect.width() - scaledW) / 2f
         val top = rect.top + (rect.height() - scaledH) / 2f
-
-        val destRect = RectF(left, top, left + scaledW, top + scaledH)
-        canvas.drawBitmap(bmp, null, destRect, null)
+        canvas.drawBitmap(bmp, null, RectF(left, top, left + scaledW, top + scaledH), null)
         canvas.restore()
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         val kb = keyboard ?: return false
-        val x = event.x.toInt()
-        val y = event.y.toInt()
+        val x = event.x.toInt(); val y = event.y.toInt()
 
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
                 val key = findKeyAt(kb, x, y)
                 pressedKey = key
+                longPressConsumed = false
                 invalidate()
-                if (key != null && key.repeatable) {
-                    startRepeat(key)
+                if (key != null) {
+                    val code = key.codes.getOrNull(0)
+                    if (key.repeatable) {
+                        startRepeat(key)
+                    } else if (code != null) {
+                        val lr = Runnable {
+                            if (pressedKey === key) {
+                                val consumed = listener?.onKeyLongPressed(code) ?: false
+                                if (consumed) longPressConsumed = true
+                            }
+                        }
+                        longPressRunnable = lr
+                        handler.postDelayed(lr, 350)
+                    }
                 }
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
                 val key = findKeyAt(kb, x, y)
                 if (key !== pressedKey) {
-                    stopRepeat()
-                    pressedKey = null
-                    invalidate()
+                    stopRepeat(); cancelLongPress()
+                    pressedKey = null; invalidate()
                 }
                 return true
             }
             MotionEvent.ACTION_UP -> {
-                stopRepeat()
+                stopRepeat(); cancelLongPress()
                 val key = pressedKey
                 pressedKey = null
                 invalidate()
-                if (key != null && !key.repeatable) {
+                if (key != null && !key.repeatable && !longPressConsumed) {
                     key.codes.getOrNull(0)?.let { listener?.onKeyClicked(it) }
                 }
+                longPressConsumed = false
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
-                stopRepeat()
-                pressedKey = null
-                invalidate()
+                stopRepeat(); cancelLongPress()
+                pressedKey = null; longPressConsumed = false; invalidate()
                 return true
             }
         }
@@ -205,26 +185,19 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
         listener?.onKeyClicked(code)
         val r = object : Runnable {
             override fun run() {
-                if (pressedKey === key) {
-                    listener?.onKeyClicked(code)
-                    handler.postDelayed(this, 60)
-                }
+                if (pressedKey === key) { listener?.onKeyClicked(code); handler.postDelayed(this, 60) }
             }
         }
         repeatRunnable = r
         handler.postDelayed(r, 400)
     }
 
-    private fun stopRepeat() {
-        repeatRunnable?.let { handler.removeCallbacks(it) }
-        repeatRunnable = null
-    }
+    private fun stopRepeat() { repeatRunnable?.let { handler.removeCallbacks(it) }; repeatRunnable = null }
+    private fun cancelLongPress() { longPressRunnable?.let { handler.removeCallbacks(it) }; longPressRunnable = null }
 
     private fun findKeyAt(kb: Keyboard, x: Int, y: Int): Keyboard.Key? {
         for (key in kb.keys) {
-            if (x >= key.x && x <= key.x + key.width && y >= key.y && y <= key.y + key.height) {
-                return key
-            }
+            if (x >= key.x && x <= key.x + key.width && y >= key.y && y <= key.y + key.height) return key
         }
         return null
     }
