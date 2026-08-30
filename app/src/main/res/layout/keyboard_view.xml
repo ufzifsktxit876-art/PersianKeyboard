@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<key.boo.ard.ali.GKeyboardView
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/keyboard_view"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@color/keyboard_bg"
+    android:keyBackground="@drawable/key_background"
+    android:keyTextColor="@color/key_text_color"
+    android:keyTextSize="22sp"
+    android:labelTextSize="13sp"
+    android:popupKeyboard="@xml/popup_template"
+    android:shadowRadius="0" />
