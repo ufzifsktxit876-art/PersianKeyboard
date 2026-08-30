@@ -75,11 +75,10 @@
     </Row>
 
     <Row>
-        <Key android:keyWidth="12%p" android:codes="-10" android:keyLabel="متن‌ها"/>
-        <Key android:keyWidth="12%p" android:codes="-11" android:keyLabel="ریست"/>
-        <Key android:keyWidth="12%p" android:codes="-12" android:keyLabel="تنظیمات"/>
-        <Key android:keyWidth="34%p" android:codes="32" android:isRepeatable="true"
-            android:keyLabel="فاصله"/>
+        <Key android:keyWidth="16%p" android:codes="-10" android:keyLabel="متن‌ها"/>
+        <Key android:keyWidth="16%p" android:codes="-11" android:keyLabel="ریست"/>
+        <Key android:keyWidth="38%p" android:codes="32" android:isRepeatable="true"
+            android:keyLabel="Salar @Ditayl"/>
         <Key android:keyWidth="15%p" android:codes="46" android:keyLabel="."/>
         <Key android:keyWidth="15%p" android:codes="-4"
             android:keyIcon="@drawable/ic_enter"/>
