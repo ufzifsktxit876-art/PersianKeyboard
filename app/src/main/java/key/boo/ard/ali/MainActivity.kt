@@ -1,11 +1,14 @@
 package key.boo.ard.ali
 
+import android.app.ActivityManager
 import android.app.Activity
 import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
+import android.os.BatteryManager
 import android.os.Bundle
 import android.provider.Settings
 import android.view.Gravity
@@ -14,383 +17,443 @@ import android.widget.*
 class MainActivity : Activity() {
 
     private lateinit var prefs: android.content.SharedPreferences
-    private val customTypeface = Typeface.create(Typeface.SERIF, Typeface.NORMAL)
+    private lateinit var contentContainer: LinearLayout
+    private val tabButtons = mutableListOf<Button>()
 
-    private lateinit var editText: EditText
-    private lateinit var modeGroup: RadioGroup
-    private lateinit var sizeGroup: RadioGroup
-    private lateinit var layoutGroup: RadioGroup
-    private lateinit var clickStyleGroup: RadioGroup
-    private lateinit var speedSeekBar: SeekBar
-    private lateinit var speedLabel: TextView
-    private lateinit var enterDelaySeekBar: SeekBar
-    private lateinit var enterDelayLabel: TextView
+    private val layoutIds = listOf("CUSTOM", "SAMSUNG", "DOLINE", "PCBOARD")
+    private val layoutNames = mapOf(
+        "CUSTOM" to "اختصاصی",
+        "SAMSUNG" to "سبک سامسونگ",
+        "DOLINE" to "طرح دو لاین",
+        "PCBOARD" to "پی‌سی‌بورد"
+    )
 
-    private lateinit var keyboardBgColorInput: EditText
-    private lateinit var keyBgColorInput: EditText
-    private lateinit var keyPressColorInput: EditText
-    private lateinit var textColorInput: EditText
-
-    private lateinit var labelMacroInput: EditText
-    private lateinit var labelResetInput: EditText
-    private lateinit var labelSpaceInput: EditText
-    private lateinit var labelPeriodInput: EditText
-
-    private var keyboardTextureUri: String? = null
-    private var keyIdleTextureUri: String? = null
-    private var keyClickTextureUri: String? = null
-
-    private val PICK_KEYBOARD_BG = 2001
-    private val PICK_KEY_IDLE = 2002
-    private val PICK_KEY_CLICK = 2003
+    private var pendingImageTarget: Pair<String, Int>? = null // (prefKey, requestCode)
+    private var imageResultCounter = 5000
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         prefs = getSharedPreferences("keyboard_prefs", MODE_PRIVATE)
 
-        val scroll = ScrollView(this)
-        scroll.setBackgroundColor(Color.parseColor("#F5F5F7"))
         val root = LinearLayout(this)
         root.orientation = LinearLayout.VERTICAL
-        root.setPadding(28, 28, 28, 80)
-        scroll.addView(root)
+        root.setBackgroundColor(Color.parseColor("#F5F5F7"))
 
         val header = TextView(this)
         header.text = "⌨ Salar @Ditayl"
-        header.textSize = 24f
-        header.typeface = Typeface.create(customTypeface, Typeface.BOLD)
+        header.textSize = 22f
+        header.setTypeface(null, Typeface.BOLD)
         header.setTextColor(Color.parseColor("#0A84FF"))
         header.gravity = Gravity.CENTER
-        header.setPadding(0, 12, 0, 28)
+        header.setPadding(0, 40, 0, 20)
         root.addView(header)
 
-        // ================= بخش ویژه Salar =================
-        root.addView(sectionCard("⭐ گزینه ویژه Salar", "#4285F4") { card ->
-            card.addView(hint("این بخش میان‌بر سریع به مهم‌ترین امکانات اختصاصی کیبورده — همه‌شون پایین‌تر هم با جزئیات کامل دوباره هستن."))
-            card.addView(bullet("✓ تایپ خودکار با دو حالت (کامل / حرف‌به‌حرف)"))
-            card.addView(bullet("✓ سه تکسچر جدا (پس‌زمینه، دکمه‌ها، حالت کلیک)"))
-            card.addView(bullet("✓ رنگ‌بندی کامل و قابل تغییر"))
-            card.addView(bullet("✓ دو چیدمان (سامسونگ / اختصاصی)"))
-            card.addView(bullet("✓ امکان تغییر متن دکمه‌های ویژه"))
+        // نوار تب‌ها
+        val tabsRow = HorizontalScrollView(this)
+        val tabsInner = LinearLayout(this)
+        tabsInner.orientation = LinearLayout.HORIZONTAL
+        tabsRow.addView(tabsInner)
+        root.addView(tabsRow)
+
+        val tabTitles = listOf("دستگاه", "چیدمان", "تم", "اتو", "متن‌ها", "بهینه‌سازی")
+        tabTitles.forEachIndexed { index, title ->
+            val b = Button(this)
+            b.text = title
+            b.setOnClickListener { showTab(index) }
+            tabsInner.addView(b)
+            tabButtons.add(b)
+        }
+
+        val scroll = ScrollView(this)
+        contentContainer = LinearLayout(this)
+        contentContainer.orientation = LinearLayout.VERTICAL
+        contentContainer.setPadding(28, 20, 28, 100)
+        scroll.addView(contentContainer)
+        root.addView(scroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+
+        setContentView(root)
+        showTab(0)
+    }
+
+    private fun showTab(index: Int) {
+        contentContainer.removeAllViews()
+        tabButtons.forEachIndexed { i, b -> b.alpha = if (i == index) 1f else 0.5f }
+        when (index) {
+            0 -> buildDeviceInfoTab()
+            1 -> buildLayoutTab()
+            2 -> buildThemeTab()
+            3 -> buildAutoTab()
+            4 -> buildLabelsTab()
+            5 -> buildOptimizeTab()
+        }
+    }
+
+    // ---------------- تب ۱: اطلاعات دستگاه ----------------
+    private fun buildDeviceInfoTab() {
+        contentContainer.addView(card("📱 اطلاعات دستگاه شما", "#0A84FF") { card ->
+            val am = getSystemService(ACTIVITY_SERVICE) as ActivityManager
+            val memInfo = ActivityManager.MemoryInfo()
+            am.getMemoryInfo(memInfo)
+            val totalRamGb = memInfo.totalMem / (1024.0 * 1024.0 * 1024.0)
+            val availRamGb = memInfo.availMem / (1024.0 * 1024.0 * 1024.0)
+            val cores = Runtime.getRuntime().availableProcessors()
+
+            var tempText = "در دسترس نیست"
+            try {
+                val intent = registerReceiver(null, IntentFilter("android.intent.action.BATTERY_CHANGED"))
+                val temp = intent?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, -1) ?: -1
+                if (temp >= 0) tempText = "${temp / 10.0}°C (دمای باتری)"
+            } catch (_: Exception) {}
+
+            card.addView(infoRow("رم کل دستگاه", "%.1f گیگابایت".format(totalRamGb)))
+            card.addView(infoRow("رم آزاد فعلی", "%.1f گیگابایت".format(availRamGb)))
+            card.addView(infoRow("تعداد هسته پردازنده", "$cores هسته"))
+            card.addView(infoRow("دمای فعلی", tempText))
+            card.addView(infoRow("اندروید", "API ${android.os.Build.VERSION.SDK_INT}"))
+            card.addView(infoRow("مدل گوشی", "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"))
+
+            card.addView(hint("این‌ها فقط اطلاعات لحظه‌ای دستگاهت هستن؛ برای این‌که کیبورد همیشه روون بمونه، سراغ تب «بهینه‌سازی» برو."))
+        })
+    }
+
+    // ---------------- تب ۲: چیدمان + اندازه ----------------
+    private lateinit var layoutRadioGroup: RadioGroup
+    private lateinit var scaleSeekBar: SeekBar
+    private lateinit var scaleLabel: TextView
+
+    private fun buildLayoutTab() {
+        contentContainer.addView(card("⌨ انتخاب چیدمان", "#AB47BC") { card ->
+            layoutRadioGroup = RadioGroup(this)
+            layoutIds.forEachIndexed { i, id ->
+                val rb = RadioButton(this)
+                rb.id = 9000 + i
+                rb.text = layoutNames[id]
+                layoutRadioGroup.addView(rb)
+            }
+            val current = prefs.getString("layout_mode", "CUSTOM")
+            val currentIndex = layoutIds.indexOf(current).coerceAtLeast(0)
+            layoutRadioGroup.check(9000 + currentIndex)
+            layoutRadioGroup.setOnCheckedChangeListener { _, checkedId ->
+                val idx = checkedId - 9000
+                prefs.edit().putString("layout_mode", layoutIds[idx]).apply()
+            }
+            card.addView(layoutRadioGroup)
         })
 
-        // ================= متن‌های آماده =================
-        root.addView(sectionCard("📝 متن‌های آماده", "#34A853") { card ->
-            card.addView(hint("هر خط یک آیتم مستقل محسوب می‌شود."))
-            editText = EditText(this)
+        contentContainer.addView(card("📏 اندازه کیبورد (کوچک ↔ بزرگ)", "#34A853") { card ->
+            scaleLabel = TextView(this)
+            scaleSeekBar = SeekBar(this)
+            scaleSeekBar.max = 90 // 60..150 mapped to 0..90
+            val current = prefs.getInt("keyboard_scale", 100)
+            scaleSeekBar.progress = current - 60
+            updateScaleLabel(current)
+            scaleSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                    val value = progress + 60
+                    updateScaleLabel(value)
+                    prefs.edit().putInt("keyboard_scale", value).apply()
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+                override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+            })
+            card.addView(scaleLabel)
+            card.addView(scaleSeekBar)
+            card.addView(hint("این اسلایدر روی هر چهار چیدمان (اختصاصی، سامسونگ، دو لاین، پی‌سی‌بورد) اعمال میشه."))
+        })
+    }
+
+    private fun updateScaleLabel(percent: Int) {
+        scaleLabel.text = "اندازه فعلی: $percent٪"
+    }
+
+    // ---------------- تب ۳: تم (رنگ + تکسچر) بر اساس چیدمان انتخابی ----------------
+    private fun buildThemeTab() {
+        val currentLayout = prefs.getString("layout_mode", "CUSTOM") ?: "CUSTOM"
+        val prefix = "theme_${currentLayout}_"
+
+        contentContainer.addView(card("🎨 تم برای: ${layoutNames[currentLayout]}", "#EF5350") { card ->
+            card.addView(hint("هر چیدمان تم مستقل خودش رو داره — تغییری که اینجا بدی فقط رو همین چیدمان اثر می‌ذاره."))
+
+            val bgInput = colorInput(card, "رنگ پس‌زمینه کیبورد", prefix + "bg_color_hex", "#E6E8EB")
+            val keyInput = colorInput(card, "رنگ دکمه‌ها", prefix + "key_color_hex", "#FFFFFF")
+            val pressInput = colorInput(card, "رنگ حالت فشرده", prefix + "press_color_hex", "#D0D0D0")
+            val textInput = colorInput(card, "رنگ نوشته‌ها", prefix + "text_color_hex", "#1F1F1F")
+
+            card.addView(subHint("تصاویر (اختیاری) — خودکار متناسب با اندازه برش می‌خورن"))
+            card.addView(imageBtn("تصویر پس‌زمینه کیبورد") { pickImageFor(prefix + "bg_texture") })
+            card.addView(imageBtn("تصویر دکمه‌ها (حالت عادی)") { pickImageFor(prefix + "key_idle_texture") })
+            card.addView(imageBtn("تصویر حالت کلیک") { pickImageFor(prefix + "key_click_texture") })
+
+            val saveBtn = Button(this)
+            saveBtn.text = "ذخیره تم این چیدمان"
+            saveBtn.setOnClickListener {
+                fun parse(hex: String, fallback: Int) = try { Color.parseColor(hex.trim()) } catch (_: Exception) { fallback }
+                prefs.edit()
+                    .putString(prefix + "bg_color_hex", bgInput.text.toString())
+                    .putString(prefix + "key_color_hex", keyInput.text.toString())
+                    .putString(prefix + "press_color_hex", pressInput.text.toString())
+                    .putString(prefix + "text_color_hex", textInput.text.toString())
+                    .putInt(prefix + "bg_color", parse(bgInput.text.toString(), Color.parseColor("#E6E8EB")))
+                    .putInt(prefix + "key_color", parse(keyInput.text.toString(), Color.WHITE))
+                    .putInt(prefix + "press_color", parse(pressInput.text.toString(), Color.parseColor("#D0D0D0")))
+                    .putInt(prefix + "text_color", parse(textInput.text.toString(), Color.parseColor("#1F1F1F")))
+                    .apply()
+                Toast.makeText(this, "ذخیره شد", Toast.LENGTH_SHORT).show()
+            }
+            card.addView(saveBtn)
+        })
+    }
+
+    // ---------------- تب ۴: اتو ----------------
+    private fun buildAutoTab() {
+        contentContainer.addView(card("⚡ روشن/خاموش تایپ خودکار", "#FBBC05") { card ->
+            val masterSwitch = Switch(this)
+            masterSwitch.text = "تایپ خودکار"
+            masterSwitch.isChecked = prefs.getBoolean("auto_master_enabled", true)
+            masterSwitch.setOnCheckedChangeListener { _, checked ->
+                prefs.edit().putBoolean("auto_master_enabled", checked).apply()
+            }
+            card.addView(masterSwitch)
+            card.addView(hint("وقتی خاموشه، دکمه «متن‌ها» هیچ پردازش یا باری اضافه به کیبورد نمی‌ده."))
+        })
+
+        contentContainer.addView(card("📝 متن‌های آماده", "#34A853") { card ->
+            val editText = EditText(this)
             editText.setText(prefs.getString("macro_items", "1\n2\n3\n4\n5"))
             editText.setLines(6)
             editText.gravity = Gravity.TOP
-            editText.typeface = customTypeface
             card.addView(editText)
+
+            val saveBtn = Button(this)
+            saveBtn.text = "ذخیره"
+            saveBtn.setOnClickListener {
+                prefs.edit().putString("macro_items", editText.text.toString()).putInt("macro_line_index", 0).apply()
+                Toast.makeText(this, "ذخیره شد", Toast.LENGTH_SHORT).show()
+            }
+            card.addView(saveBtn)
         })
 
-        // ================= حالت اتوماسیون =================
-        root.addView(sectionCard("⚡ تایپ خودکار", "#FBBC05") { card ->
-            card.addView(hint("کامل: با یک کلیک، کل لیست پشت‌سرهم تایپ می‌شود. حرف به حرف: هر کلیک، فقط یک آیتم را تایپ می‌کند."))
-            modeGroup = RadioGroup(this)
+        contentContainer.addView(card("⚙ نحوه‌ی تایپ خودکار", "#26C6DA") { card ->
+            card.addView(hint("کامل: یک کلیک، کل لیست رو پشت‌سرهم می‌زنه. حرف‌به‌حرف: هر کلیک فقط یک آیتم."))
+            val modeGroup = RadioGroup(this)
             modeGroup.orientation = RadioGroup.HORIZONTAL
-            val fullRadio = RadioButton(this).apply { id = 1001; text = "کامل" }
-            val charRadio = RadioButton(this).apply { id = 1002; text = "حرف به حرف" }
-            modeGroup.addView(fullRadio)
-            modeGroup.addView(charRadio)
+            val full = RadioButton(this).apply { id = 1001; text = "کامل" }
+            val char = RadioButton(this).apply { id = 1002; text = "حرف‌به‌حرف" }
+            modeGroup.addView(full)
+            modeGroup.addView(char)
             modeGroup.check(if (prefs.getString("auto_mode", "FULL") == "CHAR") 1002 else 1001)
+            modeGroup.setOnCheckedChangeListener { _, id ->
+                prefs.edit().putString("auto_mode", if (id == 1002) "CHAR" else "FULL").apply()
+            }
             card.addView(modeGroup)
 
             card.addView(subHint("سرعت تایپ هر حرف"))
-            speedLabel = TextView(this)
-            speedSeekBar = SeekBar(this)
-            speedSeekBar.max = 300
-            val currentSpeed = prefs.getInt("auto_speed_ms", 45)
-            speedSeekBar.progress = currentSpeed
-            updateSpeedLabel(currentSpeed)
-            speedSeekBar.setOnSeekBarChangeListener(seekListener { updateSpeedLabel(it.coerceAtLeast(10)) })
+            val speedLabel = TextView(this)
+            val speedBar = SeekBar(this)
+            speedBar.max = 300
+            val speed = prefs.getInt("auto_speed_ms", 45)
+            speedBar.progress = speed
+            speedLabel.text = "سرعت: $speed میلی‌ثانیه بین هر حرف (استاندارد پیشنهادی: ۴۵)"
+            speedBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                    val v = progress.coerceAtLeast(10)
+                    speedLabel.text = "سرعت: $v میلی‌ثانیه بین هر حرف (استاندارد پیشنهادی: ۴۵)"
+                    prefs.edit().putInt("auto_speed_ms", v).apply()
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+                override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+            })
             card.addView(speedLabel)
-            card.addView(speedSeekBar)
+            card.addView(speedBar)
 
             card.addView(subHint("مکث بین آیتم‌ها (فقط حالت کامل)"))
-            enterDelayLabel = TextView(this)
-            enterDelaySeekBar = SeekBar(this)
-            enterDelaySeekBar.max = 2000
-            val currentDelay = prefs.getInt("enter_delay_ms", 120)
-            enterDelaySeekBar.progress = currentDelay
-            updateEnterDelayLabel(currentDelay)
-            enterDelaySeekBar.setOnSeekBarChangeListener(seekListener { updateEnterDelayLabel(it) })
-            card.addView(enterDelayLabel)
-            card.addView(enterDelaySeekBar)
+            val delayLabel = TextView(this)
+            val delayBar = SeekBar(this)
+            delayBar.max = 2000
+            val delay = prefs.getInt("enter_delay_ms", 120)
+            delayBar.progress = delay
+            delayLabel.text = "مکث: $delay میلی‌ثانیه (استاندارد پیشنهادی: ۱۲۰)"
+            delayBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                    delayLabel.text = "مکث: $progress میلی‌ثانیه (استاندارد پیشنهادی: ۱۲۰)"
+                    prefs.edit().putInt("enter_delay_ms", progress).apply()
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+                override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+            })
+            card.addView(delayLabel)
+            card.addView(delayBar)
         })
-
-        // ================= چیدمان و اندازه =================
-        root.addView(sectionCard("⌨ چیدمان و اندازه", "#AB47BC") { card ->
-            card.addView(subHint("چیدمان"))
-            layoutGroup = RadioGroup(this)
-            layoutGroup.orientation = RadioGroup.HORIZONTAL
-            layoutGroup.addView(RadioButton(this).apply { id = 3001; text = "سبک سامسونگ" })
-            layoutGroup.addView(RadioButton(this).apply { id = 3002; text = "اختصاصی" })
-            layoutGroup.check(if (prefs.getString("layout_mode", "CUSTOM") == "SAMSUNG") 3001 else 3002)
-            card.addView(layoutGroup)
-
-            card.addView(subHint("اندازه"))
-            sizeGroup = RadioGroup(this)
-            sizeGroup.orientation = RadioGroup.HORIZONTAL
-            listOf("کوچک" to 2001, "متوسط" to 2002, "بزرگ" to 2003).forEach { (l, id) ->
-                sizeGroup.addView(RadioButton(this).apply { this.id = id; text = l })
-            }
-            sizeGroup.check(when (prefs.getString("keyboard_size", "MEDIUM")) { "SMALL" -> 2001; "LARGE" -> 2003; else -> 2002 })
-            card.addView(sizeGroup)
-        })
-
-        // ================= رنگ‌ها =================
-        root.addView(sectionCard("🎨 رنگ‌ها", "#EF5350") { card ->
-            card.addView(hint("کد رنگ به‌صورت #RRGGBB وارد کن"))
-            keyboardBgColorInput = colorRow(card, "رنگ پس‌زمینه کل کیبورد", "#E6E8EB", "keyboard_bg_color")
-            keyBgColorInput = colorRow(card, "رنگ خود دکمه‌ها (حالت عادی)", "#FFFFFF", "key_bg_color")
-            keyPressColorInput = colorRow(card, "رنگ دکمه در حالت فشرده", "#D0D0D0", "key_press_color")
-            textColorInput = colorRow(card, "رنگ نوشته‌های کیبورد", "#1F1F1F", "key_text_color")
-        })
-
-        // ================= تکسچرها =================
-        root.addView(sectionCard("🖼 تصاویر (تکسچر)", "#26C6DA") { card ->
-            card.addView(hint("هر تصویر به‌صورت خودکار و بدون کش‌آمدن، دقیقاً روی اندازه‌ی محل خودش برش می‌خورد."))
-
-            card.addView(subHint("۱) تصویر پس‌زمینه کل کیبورد"))
-            card.addView(imageButton("انتخاب تصویر پس‌زمینه") { pickImage(PICK_KEYBOARD_BG) })
-
-            card.addView(subHint("۲) تصویر بدنه دکمه‌ها (حالت عادی)"))
-            card.addView(imageButton("انتخاب تصویر دکمه‌ها") { pickImage(PICK_KEY_IDLE) })
-
-            card.addView(subHint("۳) تصویر حالت کلیک (فشرده)"))
-            card.addView(imageButton("انتخاب تصویر کلیک") { pickImage(PICK_KEY_CLICK) })
-
-            card.addView(subHint("سبک کلیک فعال"))
-            clickStyleGroup = RadioGroup(this)
-            clickStyleGroup.orientation = RadioGroup.HORIZONTAL
-            clickStyleGroup.addView(RadioButton(this).apply { id = 4001; text = "بدون تصویر (رنگ ساده)" })
-            clickStyleGroup.addView(RadioButton(this).apply { id = 4002; text = "با تصویر انتخابی" })
-            clickStyleGroup.check(if (prefs.getString("click_style", "CLICK1") == "CLICK2") 4002 else 4001)
-            card.addView(clickStyleGroup)
-        })
-
-        // ================= ادیت متن دکمه‌ها =================
-        root.addView(sectionCard("✏ ادیت متن دکمه‌های ویژه", "#8D6E63") { card ->
-            card.addView(hint("این تغییرات فقط متن روی دکمه‌ها رو عوض می‌کنه، تکسچر/رنگشون دست‌نخورده می‌مونه."))
-            labelMacroInput = labelRow(card, "دکمه تایپ خودکار", "label_macro", "متن‌ها")
-            labelResetInput = labelRow(card, "دکمه ریست", "label_reset", "ریست")
-            labelSpaceInput = labelRow(card, "دکمه فاصله", "label_space", "Salar @Ditayl")
-            labelPeriodInput = labelRow(card, "دکمه نقطه", "label_period", ".")
-        })
-
-        // دکمه‌ها
-        val saveButton = Button(this)
-        saveButton.text = "💾 ذخیره همه تنظیمات"
-        saveButton.setPadding(0, 30, 0, 12)
-        saveButton.setOnClickListener { saveAll() }
-        root.addView(saveButton)
-
-        val openSettingsButton = Button(this)
-        openSettingsButton.text = "فعال‌سازی کیبورد در تنظیمات گوشی"
-        openSettingsButton.setOnClickListener { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) }
-        root.addView(openSettingsButton)
-
-        val footer = TextView(this)
-        footer.text = "— Salar @Ditayl —"
-        footer.setPadding(0, 36, 0, 0)
-        footer.gravity = Gravity.CENTER
-        footer.setTextColor(Color.GRAY)
-        footer.typeface = customTypeface
-        root.addView(footer)
-
-        keyboardTextureUri = prefs.getString("keyboard_texture_uri", null)
-        keyIdleTextureUri = prefs.getString("key_idle_texture_uri", null)
-        keyClickTextureUri = prefs.getString("key_click_texture_uri", null)
-
-        setContentView(scroll)
     }
 
-    // ---------- کمکی‌های UI ----------
+    // ---------------- تب ۵: ادیت متن دکمه‌ها (به‌ازای هر چیدمان + قفل روشن/خاموش) ----------------
+    private fun buildLabelsTab() {
+        layoutIds.forEach { layoutId ->
+            contentContainer.addView(card("✏ متن‌های ${layoutNames[layoutId]}", "#8D6E63") { card ->
+                card.addView(hint("کلید سمت راست هر ردیف: قفل. وقتی خاموشه، نوشتن توی این فیلد ذخیره نمی‌شه."))
 
-    private fun sectionCard(title: String, colorHex: String, build: (LinearLayout) -> Unit): LinearLayout {
+                val resId = when (layoutId) {
+                    "SAMSUNG" -> R.xml.keyboard_samsung_medium
+                    "DOLINE" -> R.xml.keyboard_doline
+                    "PCBOARD" -> R.xml.keyboard_pcboard
+                    else -> R.xml.keyboard_persian_letters_medium
+                }
+                val kb = android.inputmethodservice.Keyboard(this, resId)
+                val codes = kb.keys.mapNotNull { it.codes.getOrNull(0) }.distinct()
+
+                codes.forEach { code ->
+                    val row = LinearLayout(this)
+                    row.orientation = LinearLayout.HORIZONTAL
+                    row.setPadding(0, 6, 0, 6)
+
+                    val enableKey = "label_enabled_${layoutId}_$code"
+                    val textKey = "label_${layoutId}_$code"
+
+                    val toggle = Switch(this)
+                    toggle.isChecked = prefs.getBoolean(enableKey, false)
+
+                    val input = EditText(this)
+                    input.setText(prefs.getString(textKey, ""))
+                    input.hint = "کد $code"
+                    input.isEnabled = toggle.isChecked
+                    input.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+
+                    toggle.setOnCheckedChangeListener { _, checked ->
+                        input.isEnabled = checked
+                        prefs.edit().putBoolean(enableKey, checked).apply()
+                    }
+                    input.setOnFocusChangeListener { _, hasFocus ->
+                        if (!hasFocus) prefs.edit().putString(textKey, input.text.toString()).apply()
+                    }
+
+                    row.addView(toggle)
+                    row.addView(input)
+                    card.addView(row)
+                }
+            })
+        }
+    }
+
+    // ---------------- تب ۶: بهینه‌سازی گوشی ----------------
+    private fun buildOptimizeTab() {
+        contentContainer.addView(card("🚀 راهنمای روان‌کردن گوشی", "#0A84FF") { card ->
+            card.addView(hint("این تغییرات مخصوص کیبورد نیستن، ولی کل گوشی (و در نتیجه کیبورد) رو سریع‌تر می‌کنن."))
+
+            val steps = listOf(
+                "تنظیمات → درباره گوشی → روی «شماره ساخت» ۷ بار پشت‌سرهم بزن تا «حالت توسعه‌دهنده» فعال بشه",
+                "تنظیمات → گزینه‌های توسعه‌دهنده → مقیاس انیمیشن پنجره، انتقال، و انیمیشن‌کننده رو هرکدوم روی «خاموش» بذار",
+                "برنامه‌های پرمصرف پس‌زمینه رو از تنظیمات → برنامه‌ها ببند یا حذف کن",
+                "تنظیمات → مراقبت از دستگاه → بهینه‌سازی رو بزن",
+                "اگه گوشیت گرمه، چند دقیقه بدون شارژ و بدون بازی سنگین صبر کن تا خنک بشه"
+            )
+
+            steps.forEachIndexed { i, step ->
+                val row = LinearLayout(this)
+                row.orientation = LinearLayout.HORIZONTAL
+                row.setPadding(0, 10, 0, 10)
+                val check = CheckBox(this)
+                check.text = "${i + 1}. $step"
+                row.addView(check)
+                card.addView(row)
+            }
+
+            val doneBtn = Button(this)
+            doneBtn.text = "این مراحل رو انجام دادم"
+            doneBtn.setOnClickListener {
+                Toast.makeText(this, "عالی! معمولاً بعد این مراحل، سرعت واکنش صفحه‌کلید و کل گوشی محسوس‌تر (تخمینی، نه اندازه‌گیری دقیق) بهتر می‌شه.", Toast.LENGTH_LONG).show()
+            }
+            card.addView(doneBtn)
+
+            card.addView(hint("توجه: درصد بهبود دقیق رو نمی‌تونیم اندازه بگیریم؛ این فقط یه راهنمای عمومیه، نه یه گزارش واقعی از سنسورهای گوشیت."))
+        })
+
+        val openSettingsBtn = Button(this)
+        openSettingsBtn.text = "فعال‌سازی کیبورد در تنظیمات گوشی"
+        openSettingsBtn.setOnClickListener { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) }
+        contentContainer.addView(openSettingsBtn)
+    }
+
+    // ---------------- کمکی‌های UI ----------------
+    private fun card(title: String, colorHex: String, build: (LinearLayout) -> Unit): LinearLayout {
         val outer = LinearLayout(this)
         outer.orientation = LinearLayout.VERTICAL
-        val outerParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-        outerParams.setMargins(0, 0, 0, 24)
-        outer.layoutParams = outerParams
+        val p = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        p.setMargins(0, 0, 0, 24)
+        outer.layoutParams = p
 
         val header = TextView(this)
         header.text = title
         header.textSize = 15f
         header.setTextColor(Color.WHITE)
-        header.typeface = Typeface.create(customTypeface, Typeface.BOLD)
+        header.setTypeface(null, Typeface.BOLD)
         header.setPadding(24, 18, 24, 18)
-        val headerBg = GradientDrawable()
-        headerBg.setColor(Color.parseColor(colorHex))
-        headerBg.cornerRadii = floatArrayOf(18f, 18f, 18f, 18f, 0f, 0f, 0f, 0f)
-        header.background = headerBg
+        val hb = GradientDrawable(); hb.setColor(Color.parseColor(colorHex)); hb.cornerRadii = floatArrayOf(18f,18f,18f,18f,0f,0f,0f,0f)
+        header.background = hb
         outer.addView(header)
 
         val body = LinearLayout(this)
         body.orientation = LinearLayout.VERTICAL
         body.setPadding(24, 20, 24, 24)
-        val bodyBg = GradientDrawable()
-        bodyBg.setColor(Color.WHITE)
-        bodyBg.cornerRadii = floatArrayOf(0f, 0f, 0f, 0f, 18f, 18f, 18f, 18f)
-        body.background = bodyBg
+        val bb = GradientDrawable(); bb.setColor(Color.WHITE); bb.cornerRadii = floatArrayOf(0f,0f,0f,0f,18f,18f,18f,18f)
+        body.background = bb
         build(body)
         outer.addView(body)
-
         return outer
     }
 
+    private fun infoRow(label: String, value: String): LinearLayout {
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.HORIZONTAL
+        row.setPadding(0, 6, 0, 6)
+        val l = TextView(this); l.text = label; l.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        val v = TextView(this); v.text = value; v.setTypeface(null, Typeface.BOLD)
+        row.addView(l); row.addView(v)
+        return row
+    }
+
     private fun hint(text: String): TextView {
-        val t = TextView(this)
-        t.text = text
-        t.textSize = 12f
-        t.setTextColor(Color.GRAY)
-        t.setPadding(0, 0, 0, 12)
-        t.typeface = customTypeface
+        val t = TextView(this); t.text = text; t.textSize = 12f; t.setTextColor(Color.GRAY); t.setPadding(0, 8, 0, 8)
         return t
     }
 
     private fun subHint(text: String): TextView {
-        val t = TextView(this)
-        t.text = text
-        t.textSize = 13f
-        t.setTypeface(customTypeface, Typeface.BOLD)
-        t.setPadding(0, 16, 0, 6)
+        val t = TextView(this); t.text = text; t.textSize = 13f; t.setTypeface(null, Typeface.BOLD); t.setPadding(0, 16, 0, 6)
         return t
     }
 
-    private fun bullet(text: String): TextView {
-        val t = TextView(this)
-        t.text = text
-        t.textSize = 13f
-        t.setPadding(0, 4, 0, 4)
-        t.typeface = customTypeface
-        return t
+    private fun colorInput(parent: LinearLayout, label: String, key: String, default: String): EditText {
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.HORIZONTAL
+        val l = TextView(this); l.text = label; l.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        val input = EditText(this); input.setText(prefs.getString(key, default))
+        input.layoutParams = LinearLayout.LayoutParams(240, LinearLayout.LayoutParams.WRAP_CONTENT)
+        row.addView(l); row.addView(input)
+        parent.addView(row)
+        return input
     }
 
-    private fun imageButton(label: String, onClick: () -> Unit): Button {
-        val b = Button(this)
-        b.text = label
-        b.setOnClickListener { onClick() }
+    private fun imageBtn(label: String, onClick: () -> Unit): Button {
+        val b = Button(this); b.text = label; b.setOnClickListener { onClick() }
         return b
     }
 
-    private fun colorRow(parent: LinearLayout, label: String, default: String, key: String): EditText {
-        val row = LinearLayout(this)
-        row.orientation = LinearLayout.HORIZONTAL
-        row.setPadding(0, 8, 0, 8)
-        val lbl = TextView(this)
-        lbl.text = label
-        lbl.textSize = 13f
-        lbl.typeface = customTypeface
-        lbl.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        val input = EditText(this)
-        input.setText(prefs.getString(key + "_hex", default))
-        input.layoutParams = LinearLayout.LayoutParams(260, LinearLayout.LayoutParams.WRAP_CONTENT)
-        row.addView(lbl)
-        row.addView(input)
-        parent.addView(row)
-        return input
-    }
-
-    private fun labelRow(parent: LinearLayout, label: String, key: String, default: String): EditText {
-        val row = LinearLayout(this)
-        row.orientation = LinearLayout.HORIZONTAL
-        row.setPadding(0, 8, 0, 8)
-        val lbl = TextView(this)
-        lbl.text = label
-        lbl.textSize = 13f
-        lbl.typeface = customTypeface
-        lbl.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        val input = EditText(this)
-        input.setText(prefs.getString(key, default))
-        input.layoutParams = LinearLayout.LayoutParams(300, LinearLayout.LayoutParams.WRAP_CONTENT)
-        row.addView(lbl)
-        row.addView(input)
-        parent.addView(row)
-        return input
-    }
-
-    private fun seekListener(onChange: (Int) -> Unit) = object : SeekBar.OnSeekBarChangeListener {
-        override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) = onChange(progress)
-        override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-        override fun onStopTrackingTouch(seekBar: SeekBar?) {}
-    }
-
-    // ---------- تصاویر ----------
-
-    private fun pickImage(requestCode: Int) {
+    private fun pickImageFor(prefKey: String) {
+        val rc = imageResultCounter++
+        pendingImageTarget = prefKey to rc
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
         intent.addCategory(Intent.CATEGORY_OPENABLE)
         intent.type = "image/*"
-        startActivityForResult(intent, requestCode)
+        startActivityForResult(intent, rc)
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         val uri: Uri = data?.data ?: return
-        try {
-            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        } catch (_: Exception) { }
-
-        when (requestCode) {
-            PICK_KEYBOARD_BG -> keyboardTextureUri = uri.toString()
-            PICK_KEY_IDLE -> keyIdleTextureUri = uri.toString()
-            PICK_KEY_CLICK -> keyClickTextureUri = uri.toString()
-        }
-        Toast.makeText(this, "تصویر انتخاب شد — دکمه ذخیره را بزن", Toast.LENGTH_SHORT).show()
-    }
-
-    private fun parseColorSafe(hex: String, fallback: Int): Int {
-        return try { Color.parseColor(hex.trim()) } catch (_: Exception) { fallback }
-    }
-
-    private fun saveAll() {
-        val mode = if (modeGroup.checkedRadioButtonId == 1002) "CHAR" else "FULL"
-        val size = when (sizeGroup.checkedRadioButtonId) { 2001 -> "SMALL"; 2003 -> "LARGE"; else -> "MEDIUM" }
-        val layoutMode = if (layoutGroup.checkedRadioButtonId == 3001) "SAMSUNG" else "CUSTOM"
-        val clickStyle = if (clickStyleGroup.checkedRadioButtonId == 4002) "CLICK2" else "CLICK1"
-
-        val keyboardBgHex = keyboardBgColorInput.text.toString()
-        val keyBgHex = keyBgColorInput.text.toString()
-        val keyPressHex = keyPressColorInput.text.toString()
-        val textHex = textColorInput.text.toString()
-
-        prefs.edit()
-            .putString("macro_items", editText.text.toString())
-            .putString("auto_mode", mode)
-            .putInt("auto_speed_ms", speedSeekBar.progress.coerceAtLeast(10))
-            .putInt("enter_delay_ms", enterDelaySeekBar.progress)
-            .putString("keyboard_size", size)
-            .putString("layout_mode", layoutMode)
-            .putString("click_style", clickStyle)
-            .putString("keyboard_bg_color_hex", keyboardBgHex)
-            .putString("key_bg_color_hex", keyBgHex)
-            .putString("key_press_color_hex", keyPressHex)
-            .putString("key_text_color_hex", textHex)
-            .putInt("keyboard_bg_color", parseColorSafe(keyboardBgHex, Color.parseColor("#E6E8EB")))
-            .putInt("key_bg_color", parseColorSafe(keyBgHex, Color.WHITE))
-            .putInt("key_press_color", parseColorSafe(keyPressHex, Color.parseColor("#D0D0D0")))
-            .putInt("key_text_color", parseColorSafe(textHex, Color.parseColor("#1F1F1F")))
-            .putString("keyboard_texture_uri", keyboardTextureUri)
-            .putString("key_idle_texture_uri", if (clickStyle == "CLICK2") keyIdleTextureUri else null)
-            .putString("key_click_texture_uri", if (clickStyle == "CLICK2") keyClickTextureUri else null)
-            .putString("label_macro", labelMacroInput.text.toString())
-            .putString("label_reset", labelResetInput.text.toString())
-            .putString("label_space", labelSpaceInput.text.toString())
-            .putString("label_period", labelPeriodInput.text.toString())
-            .putInt("macro_line_index", 0)
-            .apply()
-
-        Toast.makeText(this, "ذخیره شد", Toast.LENGTH_SHORT).show()
-    }
-
-    private fun updateSpeedLabel(ms: Int) {
-        speedLabel.text = "سرعت: ${ms.coerceAtLeast(10)} میلی‌ثانیه بین هر حرف"
-    }
-
-    private fun updateEnterDelayLabel(ms: Int) {
-        enterDelayLabel.text = "مکث بین آیتم‌ها: $ms میلی‌ثانیه"
+        val target = pendingImageTarget ?: return
+        if (target.second != requestCode) return
+        try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
+        prefs.edit().putString(target.first, uri.toString()).apply()
+        Toast.makeText(this, "تصویر ذخیره شد", Toast.LENGTH_SHORT).show()
+        pendingImageTarget = null
     }
 }
