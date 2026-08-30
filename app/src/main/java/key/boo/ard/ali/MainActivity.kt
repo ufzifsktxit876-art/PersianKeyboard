@@ -1,4 +1,4 @@
-package key.boo.ard.ali
+Package key.boo.ard.ali
 
 import android.app.ActivityManager
 import android.app.Activity
@@ -290,7 +290,7 @@ class MainActivity : Activity() {
     private fun buildLabelsTab() {
         layoutIds.forEach { layoutId ->
             contentContainer.addView(card("✏ متن‌های ${layoutNames[layoutId]}", "#8D6E63") { card ->
-                card.addView(hint("کلید سمت راست هر ردیف: قفل. وقتی خاموشه، نوشتن توی این فیلد ذخیره نمی‌شه."))
+                card.addView(hint("سوییچ روشن = این متن جایگزین متن پیش‌فرض کلید میشه."))
 
                 val resId = when (layoutId) {
                     "SAMSUNG" -> R.xml.keyboard_samsung_medium
@@ -299,22 +299,29 @@ class MainActivity : Activity() {
                     else -> R.xml.keyboard_persian_letters_medium
                 }
                 val kb = android.inputmethodservice.Keyboard(this, resId)
-                val codes = kb.keys.mapNotNull { it.codes.getOrNull(0) }.distinct()
+                val seenCodes = mutableSetOf<Int>()
 
-                codes.forEach { code ->
+                kb.keys.forEach { key ->
+                    val code = key.codes.getOrNull(0) ?: return@forEach
+                    if (!seenCodes.add(code)) return@forEach // از تکراری‌ها صرف‌نظر کن
+
+                    val originalLabel = key.label?.toString() ?: "(بدون متن)"
+                    val enableKey = "label_enabled_${layoutId}_$code"
+                    val textKey = "label_${layoutId}_$code"
+
                     val row = LinearLayout(this)
                     row.orientation = LinearLayout.HORIZONTAL
                     row.setPadding(0, 6, 0, 6)
 
-                    val enableKey = "label_enabled_${layoutId}_$code"
-                    val textKey = "label_${layoutId}_$code"
-
                     val toggle = Switch(this)
                     toggle.isChecked = prefs.getBoolean(enableKey, false)
 
+                    val nameLabel = TextView(this)
+                    nameLabel.text = "«$originalLabel»"
+                    nameLabel.layoutParams = LinearLayout.LayoutParams(140, LinearLayout.LayoutParams.WRAP_CONTENT)
+
                     val input = EditText(this)
-                    input.setText(prefs.getString(textKey, ""))
-                    input.hint = "کد $code"
+                    input.setText(prefs.getString(textKey, originalLabel))
                     input.isEnabled = toggle.isChecked
                     input.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
 
@@ -326,8 +333,7 @@ class MainActivity : Activity() {
                         if (!hasFocus) prefs.edit().putString(textKey, input.text.toString()).apply()
                     }
 
-                    row.addView(toggle)
-                    row.addView(input)
+                    row.addView(toggle); row.addView(nameLabel); row.addView(input)
                     card.addView(row)
                 }
             })
@@ -336,35 +342,31 @@ class MainActivity : Activity() {
 
     // ---------------- تب ۶: بهینه‌سازی گوشی ----------------
     private fun buildOptimizeTab() {
-        contentContainer.addView(card("🚀 راهنمای روان‌کردن گوشی", "#0A84FF") { card ->
-            card.addView(hint("این تغییرات مخصوص کیبورد نیستن، ولی کل گوشی (و در نتیجه کیبورد) رو سریع‌تر می‌کنن."))
+        contentContainer.addView(card("🚀 روان‌سازی گوشی", "#0A84FF") { card ->
+            card.addView(hint("هر مرحله رو باز کن، تغییر رو بده، برگرد اینجا برای مرحله بعد."))
 
-            val steps = listOf(
-                "تنظیمات → درباره گوشی → روی «شماره ساخت» ۷ بار پشت‌سرهم بزن تا «حالت توسعه‌دهنده» فعال بشه",
-                "تنظیمات → گزینه‌های توسعه‌دهنده → مقیاس انیمیشن پنجره، انتقال، و انیمیشن‌کننده رو هرکدوم روی «خاموش» بذار",
-                "برنامه‌های پرمصرف پس‌زمینه رو از تنظیمات → برنامه‌ها ببند یا حذف کن",
-                "تنظیمات → مراقبت از دستگاه → بهینه‌سازی رو بزن",
-                "اگه گوشیت گرمه، چند دقیقه بدون شارژ و بدون بازی سنگین صبر کن تا خنک بشه"
-            )
-
-            steps.forEachIndexed { i, step ->
+            fun stepRow(title: String, desc: String, intentAction: String) {
                 val row = LinearLayout(this)
-                row.orientation = LinearLayout.HORIZONTAL
-                row.setPadding(0, 10, 0, 10)
-                val check = CheckBox(this)
-                check.text = "${i + 1}. $step"
-                row.addView(check)
+                row.orientation = LinearLayout.VERTICAL
+                row.setPadding(0, 14, 0, 14)
+                val t = TextView(this); t.text = title; t.setTypeface(null, Typeface.BOLD)
+                val d = TextView(this); d.text = desc; d.textSize = 12f; d.setTextColor(Color.GRAY)
+                val btn = Button(this)
+                btn.text = "برو به تنظیمات"
+                btn.setOnClickListener {
+                    try { startActivity(Intent(intentAction)) }
+                    catch (_: Exception) {
+                        try { startActivity(Intent(Settings.ACTION_SETTINGS)) }
+                        catch (_: Exception) { Toast.makeText(this, "این گزینه روی گوشیت در دسترس نیست", Toast.LENGTH_SHORT).show() }
+                    }
+                }
+                row.addView(t); row.addView(d); row.addView(btn)
                 card.addView(row)
             }
 
-            val doneBtn = Button(this)
-            doneBtn.text = "این مراحل رو انجام دادم"
-            doneBtn.setOnClickListener {
-                Toast.makeText(this, "عالی! معمولاً بعد این مراحل، سرعت واکنش صفحه‌کلید و کل گوشی محسوس‌تر (تخمینی، نه اندازه‌گیری دقیق) بهتر می‌شه.", Toast.LENGTH_LONG).show()
-            }
-            card.addView(doneBtn)
-
-            card.addView(hint("توجه: درصد بهبود دقیق رو نمی‌تونیم اندازه بگیریم؛ این فقط یه راهنمای عمومیه، نه یه گزارش واقعی از سنسورهای گوشیت."))
+            stepRow("۱. فعال‌سازی حالت توسعه‌دهنده", "درباره گوشی → روی «شماره ساخت» ۷ بار بزن", Settings.ACTION_DEVICE_INFO_SETTINGS)
+            stepRow("۲. خاموش‌کردن انیمیشن‌ها", "مقیاس انیمیشن پنجره/انتقال/انیمیشن‌کننده رو صفر کن", Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
+            stepRow("۳. بستن اپ‌های پرمصرف پس‌زمینه", "لیست اپ‌ها رو باز کن و غیرضروری‌ها رو ببند", Settings.ACTION_APPLICATION_SETTINGS)
         })
 
         val openSettingsBtn = Button(this)
@@ -457,3 +459,4 @@ class MainActivity : Activity() {
         pendingImageTarget = null
     }
 }
+
