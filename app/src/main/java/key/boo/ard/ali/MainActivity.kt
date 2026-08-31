@@ -12,14 +12,16 @@ import android.net.Uri
 import android.os.BatteryManager
 import android.os.Bundle
 import android.provider.Settings
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.Gravity
 import android.widget.*
 
 class MainActivity : Activity() {
 
     private lateinit var prefs: android.content.SharedPreferences
-    private lateinit var contentContainer: LinearLayout
-    private val tabButtons = mutableListOf<Button>()
+    private lateinit var pageContainer: LinearLayout
+    private lateinit var previewView: GKeyboardView
 
     private val layoutIds = listOf("CUSTOM", "SAMSUNG", "DOLINE", "PCBOARD")
     private val layoutNames = mapOf(
@@ -38,7 +40,7 @@ class MainActivity : Activity() {
 
     private var pendingImageTarget: Pair<String, Int>? = null
     private var imageResultCounter = 5000
-    private var previewView: GKeyboardView? = null
+    private var selectedLabelsLayout = "CUSTOM"
 
     private val presetThemes = listOf(
         Triple("پیش‌فرض", "#E6E8EB", "#FFFFFF") to "#1F1F1F",
@@ -54,70 +56,110 @@ class MainActivity : Activity() {
         prefs = getSharedPreferences("keyboard_prefs", MODE_PRIVATE)
 
         val root = LinearLayout(this)
-        root.orientation = LinearLayout.HORIZONTAL
+        root.orientation = LinearLayout.VERTICAL
         root.setBackgroundColor(Color.parseColor("#F0F1F5"))
 
-        val sideMenu = ScrollView(this)
-        sideMenu.layoutParams = LinearLayout.LayoutParams(220, LinearLayout.LayoutParams.MATCH_PARENT)
-        sideMenu.setBackgroundColor(Color.parseColor("#1C1C1E"))
-        val sideMenuInner = LinearLayout(this)
-        sideMenuInner.orientation = LinearLayout.VERTICAL
-        sideMenuInner.setPadding(0, 60, 0, 20)
-        sideMenu.addView(sideMenuInner)
+        // نوار بالا (سبک آبی گورگ)
+        val topBar = LinearLayout(this)
+        topBar.orientation = LinearLayout.HORIZONTAL
+        topBar.setBackgroundColor(Color.parseColor("#1E88E5"))
+        topBar.setPadding(24, 36, 24, 24)
+        topBar.gravity = Gravity.CENTER_VERTICAL
+        val menuIcon = TextView(this); menuIcon.text = "☰"; menuIcon.textSize = 20f; menuIcon.setTextColor(Color.WHITE)
+        val topTitle = TextView(this); topTitle.text = "کیبورد فارسی — Salar @Ditayl"; topTitle.textSize = 15f
+        topTitle.setTextColor(Color.WHITE); topTitle.setTypeface(null, Typeface.BOLD)
+        topTitle.setPadding(20, 0, 0, 0)
+        topBar.addView(menuIcon); topBar.addView(topTitle)
+        root.addView(topBar)
 
-        val brandLabel = TextView(this)
-        brandLabel.text = "⌨\nSalar\n@Ditayl"
-        brandLabel.setTextColor(Color.parseColor("#0A84FF"))
-        brandLabel.setTypeface(null, Typeface.BOLD)
-        brandLabel.textSize = 14f
-        brandLabel.gravity = Gravity.CENTER
-        brandLabel.setPadding(8, 0, 8, 40)
-        sideMenuInner.addView(brandLabel)
-
-        val tabTitles = listOf("📱 دستگاه", "⌨ چیدمان", "🎨 تم", "⚡ اتو", "✏ متن‌ها", "🚀 بهینه‌سازی")
-        tabTitles.forEachIndexed { index, title ->
-            val b = Button(this)
-            b.text = title
-            b.textSize = 12f
-            b.setTextColor(Color.WHITE)
-            b.background = null
-            b.gravity = Gravity.START or Gravity.CENTER_VERTICAL
-            b.setPadding(24, 28, 8, 28)
-            b.setOnClickListener { showTab(index) }
-            sideMenuInner.addView(b)
-            tabButtons.add(b)
-        }
-        root.addView(sideMenu)
-
-        val mainCol = LinearLayout(this)
-        mainCol.orientation = LinearLayout.VERTICAL
         val scroll = ScrollView(this)
-        contentContainer = LinearLayout(this)
-        contentContainer.orientation = LinearLayout.VERTICAL
-        contentContainer.setPadding(24, 24, 24, 100)
-        scroll.addView(contentContainer)
-        mainCol.addView(scroll)
-        root.addView(mainCol, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f))
+        val outer = LinearLayout(this)
+        outer.orientation = LinearLayout.VERTICAL
+        outer.setPadding(20, 20, 20, 100)
+        scroll.addView(outer)
+        root.addView(scroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+
+        // پیش‌نمایش زنده‌ی بزرگ بالا (همیشه کیبورد فعلی رو دقیق و کامل نشون می‌ده)
+        val previewCard = LinearLayout(this)
+        previewCard.orientation = LinearLayout.VERTICAL
+        previewCard.setPadding(4, 4, 4, 4)
+        previewCard.background = GradientDrawable().apply { setColor(Color.parseColor("#111111")); cornerRadius = 20f }
+        previewView = GKeyboardView(this, null)
+        refreshPreview()
+        previewCard.addView(previewView)
+        outer.addView(previewCard, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(0, 0, 0, 24) })
+
+        // گرید کاشی‌های رنگی
+        val tileDefs = listOf(
+            Triple("📱", "دستگاه", "#42A5F5"),
+            Triple("⌨", "چیدمان", "#AB47BC"),
+            Triple("🎨", "تم", "#EF5350"),
+            Triple("⚡", "اتو", "#FBC02D"),
+            Triple("✏", "متن‌ها", "#8D6E63"),
+            Triple("🚀", "بهینه‌سازی", "#26A69A")
+        )
+        val gridRows = tileDefs.chunked(3)
+        gridRows.forEach { rowItems ->
+            val row = LinearLayout(this)
+            row.orientation = LinearLayout.HORIZONTAL
+            row.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(0, 0, 0, 12) }
+            rowItems.forEachIndexed { idx, (icon, label, colorHex) ->
+                val tile = LinearLayout(this)
+                tile.orientation = LinearLayout.VERTICAL
+                tile.gravity = Gravity.CENTER
+                tile.setPadding(12, 32, 12, 32)
+                tile.background = GradientDrawable().apply { setColor(Color.parseColor(colorHex)); cornerRadius = 18f }
+                val iconView = TextView(this); iconView.text = icon; iconView.textSize = 26f; iconView.gravity = Gravity.CENTER
+                val labelView = TextView(this); labelView.text = label; labelView.textSize = 12f
+                labelView.setTextColor(Color.WHITE); labelView.gravity = Gravity.CENTER; labelView.setPadding(0, 8, 0, 0)
+                tile.addView(iconView); tile.addView(labelView)
+                val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                lp.setMargins(if (idx == 0) 0 else 8, 0, 8, 0)
+                tile.layoutParams = lp
+                tile.setOnClickListener { showPage(label) }
+                row.addView(tile)
+            }
+            outer.addView(row)
+        }
+
+        pageContainer = LinearLayout(this)
+        pageContainer.orientation = LinearLayout.VERTICAL
+        pageContainer.setPadding(0, 20, 0, 0)
+        outer.addView(pageContainer)
 
         setContentView(root)
-        showTab(0)
+        showPage("چیدمان")
     }
 
-    private fun showTab(index: Int) {
-        contentContainer.removeAllViews()
-        tabButtons.forEachIndexed { i, b -> b.alpha = if (i == index) 1f else 0.5f }
-        when (index) {
-            0 -> buildDeviceInfoTab()
-            1 -> buildLayoutTab()
-            2 -> buildThemeTab()
-            3 -> buildAutoTab()
-            4 -> buildLabelsTab()
-            5 -> buildOptimizeTab()
+    private fun showPage(name: String) {
+        pageContainer.removeAllViews()
+        when (name) {
+            "دستگاه" -> buildDeviceInfoPage()
+            "چیدمان" -> buildLayoutPage()
+            "تم" -> buildThemePage()
+            "اتو" -> buildAutoPage()
+            "متن‌ها" -> buildLabelsPage()
+            "بهینه‌سازی" -> buildOptimizePage()
         }
     }
 
-    private fun buildDeviceInfoTab() {
-        contentContainer.addView(card("📱 اطلاعات دستگاه", "#0A84FF") { card ->
+    private fun currentLayout() = prefs.getString("layout_mode", "CUSTOM") ?: "CUSTOM"
+
+    private fun refreshPreview() {
+        val layout = currentLayout()
+        val prefix = "theme_${layout}_"
+        previewView.keyboard = cachedKeyboard(layout)
+        previewView.userScale = prefs.getInt("keyboard_scale", 100) / 100f
+        val bgColor = prefs.getInt(prefix + "bg_color", Color.parseColor("#E6E8EB"))
+        val keyColor = prefs.getInt(prefix + "key_color", Color.WHITE)
+        val pressColor = prefs.getInt(prefix + "press_color", Color.parseColor("#D0D0D0"))
+        val textColor = prefs.getInt(prefix + "text_color", Color.parseColor("#1F1F1F"))
+        previewView.setStyle(null, bgColor, null, keyColor, null, pressColor, textColor, 20f * resources.displayMetrics.scaledDensity, emptyMap())
+        previewView.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+    }
+
+    private fun buildDeviceInfoPage() {
+        pageContainer.addView(card("📱 اطلاعات دستگاه", "#42A5F5") { card ->
             val am = getSystemService(ACTIVITY_SERVICE) as ActivityManager
             val memInfo = ActivityManager.MemoryInfo()
             am.getMemoryInfo(memInfo)
@@ -139,55 +181,45 @@ class MainActivity : Activity() {
         })
     }
 
-    private lateinit var scaleSeekBar: SeekBar
-    private lateinit var scaleLabel: TextView
-
-    private fun buildLayoutTab() {
-        contentContainer.addView(card("⌨ انتخاب چیدمان", "#AB47BC") { card ->
+    private fun buildLayoutPage() {
+        pageContainer.addView(card("⌨ انتخاب چیدمان", "#AB47BC") { card ->
             val group = RadioGroup(this)
             layoutIds.forEachIndexed { i, id -> group.addView(RadioButton(this).apply { this.id = 9000 + i; text = layoutNames[id] }) }
-            val currentIndex = layoutIds.indexOf(prefs.getString("layout_mode", "CUSTOM")).coerceAtLeast(0)
+            val currentIndex = layoutIds.indexOf(currentLayout()).coerceAtLeast(0)
             group.check(9000 + currentIndex)
-            group.setOnCheckedChangeListener { _, checkedId -> prefs.edit().putString("layout_mode", layoutIds[checkedId - 9000]).apply() }
+            group.setOnCheckedChangeListener { _, checkedId ->
+                prefs.edit().putString("layout_mode", layoutIds[checkedId - 9000]).apply()
+                refreshPreview()
+            }
             card.addView(group)
         })
-        contentContainer.addView(card("📏 اندازه کیبورد", "#34A853") { card ->
-            scaleLabel = TextView(this)
-            scaleSeekBar = SeekBar(this)
+        pageContainer.addView(card("📏 اندازه کیبورد", "#34A853") { card ->
+            val scaleLabel = TextView(this)
+            val scaleSeekBar = SeekBar(this)
             scaleSeekBar.max = 60
             val current = prefs.getInt("keyboard_scale", 100)
             scaleSeekBar.progress = current - 70
-            updateScaleLabel(current)
+            scaleLabel.text = "اندازه فعلی: $current٪"
             scaleSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                     val value = progress + 70
-                    updateScaleLabel(value)
+                    scaleLabel.text = "اندازه فعلی: $value٪"
                     prefs.edit().putInt("keyboard_scale", value).apply()
+                    refreshPreview()
                 }
                 override fun onStartTrackingTouch(seekBar: SeekBar?) {}
                 override fun onStopTrackingTouch(seekBar: SeekBar?) {}
             })
             card.addView(scaleLabel); card.addView(scaleSeekBar)
-            card.addView(hint("این فقط ارتفاع کلیدها رو کم/زیاد می‌کنه (کوچیک‌تر/بزرگ‌تر)؛ عرض کیبورد همیشه دقیقاً هم‌عرض صفحه می‌مونه."))
+            card.addView(hint("پیش‌نمایش بالای صفحه هم زنده و هم‌زمان با این تغییر آپدیت می‌شه."))
         })
     }
 
-    private fun updateScaleLabel(percent: Int) { scaleLabel.text = "اندازه فعلی: $percent٪" }
+    private fun buildThemePage() {
+        val layout = currentLayout()
+        val prefix = "theme_${layout}_"
 
-    private fun buildThemeTab() {
-        val currentLayout = prefs.getString("layout_mode", "CUSTOM") ?: "CUSTOM"
-        val prefix = "theme_${currentLayout}_"
-
-        contentContainer.addView(card("👁 پیش‌نمایش زنده — ${layoutNames[currentLayout]}", "#0A84FF") { card ->
-            val preview = GKeyboardView(this, null)
-            preview.keyboard = cachedKeyboard(currentLayout)
-            preview.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            previewView = preview
-            card.addView(preview)
-            refreshPreview(prefix)
-        })
-
-        contentContainer.addView(card("🖼 تم‌های آماده", "#FF7043") { card ->
+        pageContainer.addView(card("🖼 تم‌های آماده — ${layoutNames[layout]}", "#FF7043") { card ->
             val row = LinearLayout(this)
             row.orientation = LinearLayout.HORIZONTAL
             presetThemes.forEach { (info, textHex) ->
@@ -203,14 +235,15 @@ class MainActivity : Activity() {
                         .putInt(prefix + "bg_color", Color.parseColor(bgHex)).putInt(prefix + "key_color", Color.parseColor(keyHex))
                         .putInt(prefix + "press_color", Color.parseColor(keyHex)).putInt(prefix + "text_color", Color.parseColor(textHex))
                         .apply()
-                    showTab(2)
+                    refreshPreview()
+                    showPage("تم")
                 }
                 row.addView(swatch)
             }
             card.addView(HorizontalScrollView(this).apply { addView(row) })
         })
 
-        contentContainer.addView(card("🎨 رنگ‌های دستی", "#EF5350") { card ->
+        pageContainer.addView(card("🎨 رنگ‌های دستی", "#EF5350") { card ->
             val bgInput = colorInput(card, "پس‌زمینه کیبورد", prefix + "bg_color_hex", "#E6E8EB")
             val keyInput = colorInput(card, "دکمه‌ها", prefix + "key_color_hex", "#FFFFFF")
             val pressInput = colorInput(card, "حالت فشرده", prefix + "press_color_hex", "#D0D0D0")
@@ -233,24 +266,15 @@ class MainActivity : Activity() {
                     .putInt(prefix + "press_color", parse(pressInput.text.toString(), Color.parseColor("#D0D0D0")))
                     .putInt(prefix + "text_color", parse(textInput.text.toString(), Color.parseColor("#1F1F1F")))
                     .apply()
-                refreshPreview(prefix)
+                refreshPreview()
                 Toast.makeText(this, "ذخیره شد", Toast.LENGTH_SHORT).show()
             }
             card.addView(saveBtn)
         })
     }
 
-    private fun refreshPreview(prefix: String) {
-        val preview = previewView ?: return
-        val bgColor = prefs.getInt(prefix + "bg_color", Color.parseColor("#E6E8EB"))
-        val keyColor = prefs.getInt(prefix + "key_color", Color.WHITE)
-        val pressColor = prefs.getInt(prefix + "press_color", Color.parseColor("#D0D0D0"))
-        val textColor = prefs.getInt(prefix + "text_color", Color.parseColor("#1F1F1F"))
-        preview.setStyle(null, bgColor, null, keyColor, null, pressColor, textColor, 20f * resources.displayMetrics.scaledDensity, emptyMap())
-    }
-
-    private fun buildAutoTab() {
-        contentContainer.addView(card("⚡ روشن/خاموش تایپ خودکار", "#FBBC05") { card ->
+    private fun buildAutoPage() {
+        pageContainer.addView(card("⚡ روشن/خاموش تایپ خودکار", "#FBC02D") { card ->
             val masterSwitch = Switch(this)
             masterSwitch.text = "تایپ خودکار فعال"
             masterSwitch.isChecked = prefs.getBoolean("auto_master_enabled", true)
@@ -258,7 +282,7 @@ class MainActivity : Activity() {
             card.addView(masterSwitch)
         })
 
-        contentContainer.addView(card("📝 متن‌های آماده", "#34A853") { card ->
+        pageContainer.addView(card("📝 متن‌های آماده", "#34A853") { card ->
             val editText = EditText(this)
             editText.setText(prefs.getString("macro_items", "1\n2\n3\n4\n5"))
             editText.setLines(6)
@@ -273,7 +297,7 @@ class MainActivity : Activity() {
             card.addView(saveBtn)
         })
 
-        contentContainer.addView(card("⚙ نحوه‌ی اجرا", "#26C6DA") { card ->
+        pageContainer.addView(card("⚙ نحوه‌ی اجرا", "#26C6DA") { card ->
             val modeGroup = RadioGroup(this)
             modeGroup.orientation = RadioGroup.HORIZONTAL
             modeGroup.addView(RadioButton(this).apply { id = 1001; text = "کامل (پشت‌سرهم)" })
@@ -298,7 +322,7 @@ class MainActivity : Activity() {
             })
             card.addView(speedLabel); card.addView(speedBar)
 
-            card.addView(subHint("مکث بین آیتم‌ها (پیشنهاد: حداقل ۳۰۰ برای جلوگیری از خطای ارسال تلگرام)"))
+            card.addView(subHint("مکث بین آیتم‌ها"))
             val delayLabel = TextView(this)
             val delayBar = SeekBar(this); delayBar.max = 3000
             val delay = prefs.getInt("enter_delay_ms", 350); delayBar.progress = delay
@@ -331,58 +355,71 @@ class MainActivity : Activity() {
         })
     }
 
-    private fun buildLabelsTab() {
-        layoutIds.forEach { layoutId ->
-            contentContainer.addView(card("✏ متن‌های ${layoutNames[layoutId]}", "#8D6E63") { card ->
-                val kb = cachedKeyboard(layoutId)
-                val seenCodes = mutableSetOf<Int>()
+    // فقط چیدمان انتخاب‌شده رو نشون میده (نه هر ۴ تا هم‌زمان) — رفع لگ/کرش
+    private fun buildLabelsPage() {
+        pageContainer.addView(card("✏ متن‌ها — انتخاب چیدمان", "#8D6E63") { card ->
+            val group = RadioGroup(this)
+            group.orientation = RadioGroup.HORIZONTAL
+            layoutIds.forEachIndexed { i, id -> group.addView(RadioButton(this).apply { this.id = 8000 + i; text = layoutNames[id] }) }
+            group.check(8000 + layoutIds.indexOf(selectedLabelsLayout).coerceAtLeast(0))
+            group.setOnCheckedChangeListener { _, checkedId ->
+                selectedLabelsLayout = layoutIds[checkedId - 8000]
+                showPage("متن‌ها")
+            }
+            card.addView(group)
+        })
 
-                kb.keys.forEach { key ->
-                    val code = key.codes.getOrNull(0) ?: return@forEach
-                    if (!seenCodes.add(code)) return@forEach
+        pageContainer.addView(card("✏ متن‌های ${layoutNames[selectedLabelsLayout]}", "#8D6E63") { card ->
+            val kb = cachedKeyboard(selectedLabelsLayout)
+            val seenCodes = mutableSetOf<Int>()
 
-                    val originalLabel = key.label?.toString() ?: "(بدون متن)"
-                    val enableKey = "label_enabled_${layoutId}_$code"
-                    val textKey = "label_${layoutId}_$code"
+            kb.keys.forEach { key ->
+                val code = key.codes.getOrNull(0) ?: return@forEach
+                if (!seenCodes.add(code)) return@forEach
 
-                    val row = LinearLayout(this)
-                    row.orientation = LinearLayout.HORIZONTAL
-                    row.setPadding(0, 6, 0, 6)
+                val originalLabel = key.label?.toString() ?: "(بدون متن)"
+                val enableKey = "label_enabled_${selectedLabelsLayout}_$code"
+                val textKey = "label_${selectedLabelsLayout}_$code"
 
-                    val toggle = Switch(this)
-                    toggle.isChecked = prefs.getBoolean(enableKey, false)
+                val row = LinearLayout(this)
+                row.orientation = LinearLayout.HORIZONTAL
+                row.setPadding(0, 5, 0, 5)
 
-                    val nameLabel = TextView(this)
-                    nameLabel.text = "«$originalLabel»"
-                    nameLabel.layoutParams = LinearLayout.LayoutParams(120, LinearLayout.LayoutParams.WRAP_CONTENT)
+                val toggle = Switch(this)
+                toggle.isChecked = prefs.getBoolean(enableKey, false)
 
-                    val input = EditText(this)
-                    input.setText(prefs.getString(textKey, originalLabel))
-                    input.isEnabled = toggle.isChecked
-                    input.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                val nameLabel = TextView(this)
+                nameLabel.text = "«$originalLabel»"
+                nameLabel.textSize = 12f
+                nameLabel.layoutParams = LinearLayout.LayoutParams(100, LinearLayout.LayoutParams.WRAP_CONTENT)
 
-                    val saveBtn = Button(this)
-                    saveBtn.text = "ذخیره"
-                    saveBtn.textSize = 10f
-                    saveBtn.setOnClickListener {
-                        prefs.edit().putString(textKey, input.text.toString()).putBoolean(enableKey, toggle.isChecked).apply()
-                        Toast.makeText(this, "ذخیره شد", Toast.LENGTH_SHORT).show()
+                val input = EditText(this)
+                input.setText(prefs.getString(textKey, originalLabel))
+                input.isEnabled = toggle.isChecked
+                input.textSize = 12f
+                input.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+
+                // ذخیره خودکار (بدون دکمه‌ی جدا، سبک‌تر برای گوشی‌های ضعیف‌تر)
+                input.addTextChangedListener(object : TextWatcher {
+                    override fun afterTextChanged(s: Editable?) {
+                        prefs.edit().putString(textKey, s.toString()).apply()
                     }
-
-                    toggle.setOnCheckedChangeListener { _, checked ->
-                        input.isEnabled = checked
-                        prefs.edit().putBoolean(enableKey, checked).apply()
-                    }
-
-                    row.addView(toggle); row.addView(nameLabel); row.addView(input); row.addView(saveBtn)
-                    card.addView(row)
+                    override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                    override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                })
+                toggle.setOnCheckedChangeListener { _, checked ->
+                    input.isEnabled = checked
+                    prefs.edit().putBoolean(enableKey, checked).apply()
                 }
-            })
-        }
+
+                row.addView(toggle); row.addView(nameLabel); row.addView(input)
+                card.addView(row)
+            }
+        })
     }
 
-    private fun buildOptimizeTab() {
-        contentContainer.addView(card("🚀 روان‌سازی گوشی", "#0A84FF") { card ->
+    private fun buildOptimizePage() {
+        pageContainer.addView(card("🚀 روان‌سازی گوشی", "#26A69A") { card ->
             fun stepRow(title: String, desc: String, intentAction: String) {
                 val row = LinearLayout(this)
                 row.orientation = LinearLayout.VERTICAL
@@ -408,7 +445,7 @@ class MainActivity : Activity() {
         val openSettingsBtn = Button(this)
         openSettingsBtn.text = "فعال‌سازی کیبورد در تنظیمات گوشی"
         openSettingsBtn.setOnClickListener { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) }
-        contentContainer.addView(openSettingsBtn)
+        pageContainer.addView(openSettingsBtn)
     }
 
     private fun card(title: String, colorHex: String, build: (LinearLayout) -> Unit): LinearLayout {
@@ -470,6 +507,7 @@ class MainActivity : Activity() {
         if (target.second != requestCode) return
         try { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
         prefs.edit().putString(target.first, uri.toString()).apply()
+        refreshPreview()
         Toast.makeText(this, "تصویر ذخیره شد", Toast.LENGTH_SHORT).show()
         pendingImageTarget = null
     }
