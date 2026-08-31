@@ -13,7 +13,6 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
 
     interface OnKeyClickListener {
         fun onKeyClicked(code: Int)
-        fun onKeyLongPressed(code: Int): Boolean // true یعنی مصرف شد، دیگه tap عادی اجرا نشه
     }
 
     var keyboard: Keyboard? = null
@@ -39,10 +38,8 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
     private var pressedKey: Keyboard.Key? = null
     private var highlightRect: RectF? = null
     private var repeatRunnable: Runnable? = null
-    private var longPressRunnable: Runnable? = null
-    private var longPressConsumed = false
 
-    init { setLayerType(LAYER_TYPE_HARDWARE, null) } // رندر سریع‌تر، بدون افت فریم
+    init { setLayerType(LAYER_TYPE_HARDWARE, null) }
 
     fun setStyle(
         bgBitmap: Bitmap?, bgColor: Int,
@@ -68,9 +65,12 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
 
     fun clearHighlight() { highlightRect = null; invalidate() }
 
+    // مهم: ارتفاع از موقعیت واقعی کلیدها محاسبه میشه، نه از عدد ثابت XML.
+    // این همون فیکس اصلی نامیزونی/جابه‌جایی کلیدها هنگام تغییر اندازه‌ست.
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val width = MeasureSpec.getSize(widthMeasureSpec)
-        val height = keyboard?.height ?: 200
+        val kb = keyboard
+        val height = kb?.keys?.maxOfOrNull { it.y + it.height } ?: 200
         setMeasuredDimension(width, height)
     }
 
@@ -104,6 +104,10 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
                 val code = key.codes.getOrNull(0) ?: 0
                 val label = labelOverrides[code] ?: key.label?.toString() ?: ""
                 if (label.isNotEmpty()) {
+                    // اندازه‌ی متن رو با اندازه‌ی خود کلید محدود می‌کنیم تا هیچ‌وقت بیرون نزنه یا بریده نشه
+                    val maxTextSize = key.height * 0.42f
+                    val effectiveSize = minOf(textSizePx, maxTextSize)
+                    textPaint.textSize = effectiveSize
                     val cx = key.x + key.width / 2f
                     val cy = key.y + key.height / 2f - (textPaint.descent() + textPaint.ascent()) / 2f
                     canvas.drawText(label, cx, cy, textPaint)
@@ -133,47 +137,27 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
             MotionEvent.ACTION_DOWN -> {
                 val key = findKeyAt(kb, x, y)
                 pressedKey = key
-                longPressConsumed = false
                 invalidate()
-                if (key != null) {
-                    val code = key.codes.getOrNull(0)
-                    if (key.repeatable) {
-                        startRepeat(key)
-                    } else if (code != null) {
-                        val lr = Runnable {
-                            if (pressedKey === key) {
-                                val consumed = listener?.onKeyLongPressed(code) ?: false
-                                if (consumed) longPressConsumed = true
-                            }
-                        }
-                        longPressRunnable = lr
-                        handler.postDelayed(lr, 350)
-                    }
-                }
+                if (key != null && key.repeatable) startRepeat(key)
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
                 val key = findKeyAt(kb, x, y)
-                if (key !== pressedKey) {
-                    stopRepeat(); cancelPendingLongPress()
-                    pressedKey = null; invalidate()
-                }
+                if (key !== pressedKey) { stopRepeat(); pressedKey = null; invalidate() }
                 return true
             }
             MotionEvent.ACTION_UP -> {
-                stopRepeat(); cancelPendingLongPress()
+                stopRepeat()
                 val key = pressedKey
                 pressedKey = null
                 invalidate()
-                if (key != null && !key.repeatable && !longPressConsumed) {
+                if (key != null && !key.repeatable) {
                     key.codes.getOrNull(0)?.let { listener?.onKeyClicked(it) }
                 }
-                longPressConsumed = false
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
-                stopRepeat(); cancelPendingLongPress()
-                pressedKey = null; longPressConsumed = false; invalidate()
+                stopRepeat(); pressedKey = null; invalidate()
                 return true
             }
         }
@@ -193,7 +177,6 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
     }
 
     private fun stopRepeat() { repeatRunnable?.let { handler.removeCallbacks(it) }; repeatRunnable = null }
-    private fun cancelPendingLongPress() { longPressRunnable?.let { handler.removeCallbacks(it) }; longPressRunnable = null }
 
     private fun findKeyAt(kb: Keyboard, x: Int, y: Int): Keyboard.Key? {
         for (key in kb.keys) {
