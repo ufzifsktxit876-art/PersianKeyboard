@@ -15,7 +15,6 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
         fun onKeyClicked(code: Int)
     }
 
-    // کدهایی که نباید هیچ فیدبک بصری فشردن (رنگ/تکسچر) داشته باشن، فقط سریع اجرا بشن
     var noPressVisualCodes: Set<Int> = setOf(-10, -11)
 
     var keyboard: Keyboard? = null
@@ -37,7 +36,6 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
     private val keyPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
-    // یک متغیر واحد برای "کلید فشرده" — هم لمس دستی هم اتو دقیقاً از همینجا استفاده می‌کنن
     private var pressedKey: Keyboard.Key? = null
     private var repeatRunnable: Runnable? = null
 
@@ -58,7 +56,6 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
         invalidate()
     }
 
-    /** برای اتو-تایپر: دقیقاً همون کلیدی که کاربر دستی لمس می‌کنه رو "فشرده" نشون می‌ده — رنگ/تکسچر ۱۰۰٪ یکسان. */
     fun setAutoPressedKeyByCode(code: Int?) {
         pressedKey = if (code == null) null else keyboard?.keys?.firstOrNull { it.codes.getOrNull(0) == code }
         invalidate()
