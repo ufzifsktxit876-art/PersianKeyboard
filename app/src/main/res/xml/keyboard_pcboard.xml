@@ -1,25 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Keyboard xmlns:android="http://schemas.android.com/apk/res/android"
-    android:keyWidth="10%p"
+    android:keyWidth="8.333%p"
     android:keyHeight="52dp"
     android:horizontalGap="0px"
     android:verticalGap="4dp">
 
-    <Row android:keyWidth="20%p">
+    <Row>
         <Key android:keyLabel="1"/>
         <Key android:keyLabel="2"/>
         <Key android:keyLabel="3"/>
         <Key android:keyLabel="4"/>
         <Key android:keyLabel="5"/>
-    </Row>
-    <Row android:keyWidth="20%p">
         <Key android:keyLabel="6"/>
         <Key android:keyLabel="7"/>
         <Key android:keyLabel="8"/>
         <Key android:keyLabel="9"/>
         <Key android:keyLabel="0"/>
+        <Key android:keyLabel="-"/>
+        <Key android:keyLabel="="/>
     </Row>
-    <Row>
+    <Row android:keyWidth="10%p">
         <Key android:keyLabel="ص"/>
         <Key android:keyLabel="ث"/>
         <Key android:keyLabel="ق"/>
@@ -31,7 +31,7 @@
         <Key android:keyLabel="ج"/>
         <Key android:keyLabel="چ"/>
     </Row>
-    <Row>
+    <Row android:keyWidth="10%p">
         <Key android:keyLabel="ش"/>
         <Key android:keyLabel="س"/>
         <Key android:keyLabel="ی"/>
@@ -43,7 +43,7 @@
         <Key android:keyLabel="م"/>
         <Key android:keyLabel="پ"/>
     </Row>
-    <Row>
+    <Row android:keyWidth="10%p">
         <Key android:keyLabel="ط"/>
         <Key android:keyLabel="ز"/>
         <Key android:keyLabel="ر"/>
@@ -54,11 +54,12 @@
         <Key android:keyLabel="ظ"/>
         <Key android:keyWidth="20%p" android:codes="-5" android:isRepeatable="true" android:keyIcon="@drawable/ic_backspace"/>
     </Row>
-    <Row android:keyHeight="58dp">
-        <Key android:keyWidth="20%p" android:codes="-10" android:keyLabel="متن‌ها"/>
-        <Key android:keyWidth="20%p" android:codes="-11" android:keyLabel="ریست"/>
+    <Row android:keyHeight="58dp" android:keyWidth="10%p">
+        <Key android:keyWidth="16%p" android:codes="-10" android:keyLabel="متن‌ها"/>
+        <Key android:keyWidth="13%p" android:codes="-11" android:keyLabel="ریست"/>
         <Key android:keyWidth="34%p" android:codes="32" android:keyLabel="فاصله"/>
-        <Key android:keyWidth="26%p" android:codes="-4" android:isRepeatable="true" android:keyIcon="@drawable/ic_enter"/>
+        <Key android:keyWidth="15%p" android:codes="46" android:keyLabel="."/>
+        <Key android:keyWidth="22%p" android:codes="-4" android:isRepeatable="true" android:keyIcon="@drawable/ic_enter"/>
     </Row>
 
 </Keyboard>
