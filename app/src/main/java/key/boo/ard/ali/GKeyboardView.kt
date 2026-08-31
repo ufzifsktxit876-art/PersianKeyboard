@@ -15,6 +15,9 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
         fun onKeyClicked(code: Int)
     }
 
+    // کدهایی که نباید هیچ فیدبک بصری فشردن (رنگ/تکسچر) داشته باشن، فقط سریع اجرا بشن
+    var noPressVisualCodes: Set<Int> = setOf(-10, -11)
+
     var keyboard: Keyboard? = null
         set(value) { field = value; requestLayout(); invalidate() }
 
@@ -28,15 +31,14 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
     private var keyClickBitmap: Bitmap? = null
     private var keyClickColor: Int = Color.parseColor("#D0D0D0")
     private var textColor: Int = Color.parseColor("#1F1F1F")
-    private var textSizePx: Float = 46f
+    private var textSizePx: Float = 40f
     private var labelOverrides: Map<Int, String> = emptyMap()
 
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
     private val keyPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val highlightPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
+    // یک متغیر واحد برای "کلید فشرده" — هم لمس دستی هم اتو دقیقاً از همینجا استفاده می‌کنن
     private var pressedKey: Keyboard.Key? = null
-    private var highlightRect: RectF? = null
     private var repeatRunnable: Runnable? = null
 
     init { setLayerType(LAYER_TYPE_HARDWARE, null) }
@@ -46,31 +48,27 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
         keyIdleBitmap: Bitmap?, keyIdleColor: Int,
         keyClickBitmap: Bitmap?, keyClickColor: Int,
         textColor: Int, textSizePx: Float,
-        labelOverrides: Map<Int, String>,
-        highlightColor: Int
+        labelOverrides: Map<Int, String>
     ) {
         this.bgBitmap = bgBitmap; this.bgColor = bgColor
         this.keyIdleBitmap = keyIdleBitmap; this.keyIdleColor = keyIdleColor
         this.keyClickBitmap = keyClickBitmap; this.keyClickColor = keyClickColor
         this.textColor = textColor; this.textSizePx = textSizePx
         this.labelOverrides = labelOverrides
-        highlightPaint.color = highlightColor
         invalidate()
     }
 
-    fun setHighlight(x: Int, y: Int, w: Int, h: Int) {
-        highlightRect = RectF(x.toFloat(), y.toFloat(), (x + w).toFloat(), (y + h).toFloat())
+    /** برای اتو-تایپر: دقیقاً همون کلیدی که کاربر دستی لمس می‌کنه رو "فشرده" نشون می‌ده — رنگ/تکسچر ۱۰۰٪ یکسان. */
+    fun setAutoPressedKeyByCode(code: Int?) {
+        pressedKey = if (code == null) null else keyboard?.keys?.firstOrNull { it.codes.getOrNull(0) == code }
         invalidate()
     }
 
-    fun clearHighlight() { highlightRect = null; invalidate() }
-
-    // مهم: ارتفاع از موقعیت واقعی کلیدها محاسبه میشه، نه از عدد ثابت XML.
-    // این همون فیکس اصلی نامیزونی/جابه‌جایی کلیدها هنگام تغییر اندازه‌ست.
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val width = MeasureSpec.getSize(widthMeasureSpec)
-        val kb = keyboard
-        val height = kb?.keys?.maxOfOrNull { it.y + it.height } ?: 200
+        val contentHeight = keyboard?.keys?.maxOfOrNull { it.y + it.height } ?: 200
+        val heightMode = MeasureSpec.getMode(heightMeasureSpec)
+        val height = if (heightMode == MeasureSpec.EXACTLY) MeasureSpec.getSize(heightMeasureSpec) else contentHeight
         setMeasuredDimension(width, height)
     }
 
@@ -81,11 +79,11 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
         if (bgBitmap != null) drawBitmapCover(canvas, bgBitmap!!, RectF(0f, 0f, width.toFloat(), height.toFloat()), 0f)
         else canvas.drawColor(bgColor)
 
-        textPaint.textSize = textSizePx
-        textPaint.color = textColor
-
         for (key in kb.keys) {
-            val isPressed = key === pressedKey
+            val code = key.codes.getOrNull(0) ?: 0
+            val canShowPress = code !in noPressVisualCodes
+            val isPressed = canShowPress && key === pressedKey
+
             val rect = RectF((key.x + 2).toFloat(), (key.y + 3).toFloat(), (key.x + key.width - 2).toFloat(), (key.y + key.height - 3).toFloat())
             val bmp = if (isPressed) keyClickBitmap else keyIdleBitmap
             val color = if (isPressed) keyClickColor else keyIdleColor
@@ -101,20 +99,17 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
                 icon.setTint(textColor)
                 icon.draw(canvas)
             } else {
-                val code = key.codes.getOrNull(0) ?: 0
                 val label = labelOverrides[code] ?: key.label?.toString() ?: ""
                 if (label.isNotEmpty()) {
-                    // اندازه‌ی متن رو با اندازه‌ی خود کلید محدود می‌کنیم تا هیچ‌وقت بیرون نزنه یا بریده نشه
-                    val maxTextSize = key.height * 0.42f
-                    val effectiveSize = minOf(textSizePx, maxTextSize)
-                    textPaint.textSize = effectiveSize
+                    val maxTextSize = key.height * 0.38f
+                    textPaint.textSize = minOf(textSizePx, maxTextSize)
+                    textPaint.color = textColor
                     val cx = key.x + key.width / 2f
                     val cy = key.y + key.height / 2f - (textPaint.descent() + textPaint.ascent()) / 2f
                     canvas.drawText(label, cx, cy, textPaint)
                 }
             }
         }
-        highlightRect?.let { canvas.drawRoundRect(it, 12f, 12f, highlightPaint) }
     }
 
     private fun drawBitmapCover(canvas: Canvas, bmp: Bitmap, rect: RectF, radius: Float) {
