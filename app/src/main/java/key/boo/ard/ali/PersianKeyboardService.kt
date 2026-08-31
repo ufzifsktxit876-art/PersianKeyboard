@@ -67,19 +67,11 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
             else -> R.xml.keyboard_persian_letters_medium
         }
         val kb = Keyboard(this, resId)
-        applyScale(kb, p.getInt("keyboard_scale", 100))
         activeKeyboard = kb
         keyboardView.keyboard = kb
+        // اندازه دیگه با دستکاری مختصات نیست؛ مستقیم به موتور رندر داده میشه (بدون باگ زوم/جابه‌جایی)
+        keyboardView.userScale = p.getInt("keyboard_scale", 100) / 100f
         applyStyle(p)
-    }
-
-    private fun applyScale(kb: Keyboard, scalePercent: Int) {
-        val scale = scalePercent.coerceIn(70, 130) / 100f
-        if (scale == 1f) return
-        for (key in kb.keys) {
-            key.y = (key.y * scale).toInt()
-            key.height = (key.height * scale).toInt()
-        }
     }
 
     private fun applyStyle(p: android.content.SharedPreferences) {
@@ -202,16 +194,11 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
         prefs().edit().putInt("macro_line_index", 0).apply()
     }
 
+    /** طبق درخواست صریح: همیشه یک KeyEvent واقعی Enter فرستاده میشه، نه performEditorAction —
+     *  چون توی بعضی فیلدها (از جمله تلگرام) اکشن‌های خاص باعث بسته‌شدن ناگهانی کیبورد می‌شدن. */
     private fun sendRealEnter(ic: InputConnection?) {
         if (ic == null) return
-        val info = currentInputEditorInfo
-        val action = (info?.imeOptions ?: 0) and EditorInfo.IME_MASK_ACTION
-        if (action == EditorInfo.IME_ACTION_SEND || action == EditorInfo.IME_ACTION_DONE ||
-            action == EditorInfo.IME_ACTION_GO || action == EditorInfo.IME_ACTION_NEXT) {
-            ic.performEditorAction(action)
-        } else {
-            ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
-            ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
-        }
+        ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
+        ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
     }
 }
