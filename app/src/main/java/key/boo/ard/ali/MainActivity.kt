@@ -32,7 +32,6 @@ class MainActivity : Activity() {
         "DOLINE" to R.xml.keyboard_doline,
         "PCBOARD" to R.xml.keyboard_pcboard
     )
-    // کش: هر چیدمان فقط یک‌بار ساخته میشه، نه هر بار که تب باز میشه (رفع کندی)
     private val keyboardCache = HashMap<String, Keyboard>()
     private fun cachedKeyboard(layoutId: String): Keyboard =
         keyboardCache.getOrPut(layoutId) { Keyboard(this, layoutResIds[layoutId]!!) }
@@ -58,7 +57,6 @@ class MainActivity : Activity() {
         root.orientation = LinearLayout.HORIZONTAL
         root.setBackgroundColor(Color.parseColor("#F0F1F5"))
 
-        // منوی عمودی سمت راست (سبک پلاس)
         val sideMenu = ScrollView(this)
         sideMenu.layoutParams = LinearLayout.LayoutParams(220, LinearLayout.LayoutParams.MATCH_PARENT)
         sideMenu.setBackgroundColor(Color.parseColor("#1C1C1E"))
@@ -91,7 +89,6 @@ class MainActivity : Activity() {
         }
         root.addView(sideMenu)
 
-        // محتوای اصلی
         val mainCol = LinearLayout(this)
         mainCol.orientation = LinearLayout.VERTICAL
         val scroll = ScrollView(this)
@@ -171,7 +168,7 @@ class MainActivity : Activity() {
                 override fun onStopTrackingTouch(seekBar: SeekBar?) {}
             })
             card.addView(scaleLabel); card.addView(scaleSeekBar)
-            card.addView(hint("بازه: ۷۰٪ تا ۱۳۰٪ — برای جلوگیری از خراب‌شدن چیدمان محدود شده."))
+            card.addView(hint("این فقط ارتفاع کلیدها رو کم/زیاد می‌کنه (کوچیک‌تر/بزرگ‌تر)؛ عرض کیبورد همیشه دقیقاً هم‌عرض صفحه می‌مونه."))
         })
     }
 
@@ -184,8 +181,7 @@ class MainActivity : Activity() {
         contentContainer.addView(card("👁 پیش‌نمایش زنده — ${layoutNames[currentLayout]}", "#0A84FF") { card ->
             val preview = GKeyboardView(this, null)
             preview.keyboard = cachedKeyboard(currentLayout)
-            val previewHeightPx = (240 * resources.displayMetrics.density).toInt()
-            preview.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, previewHeightPx)
+            preview.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
             previewView = preview
             card.addView(preview)
             refreshPreview(prefix)
@@ -302,10 +298,10 @@ class MainActivity : Activity() {
             })
             card.addView(speedLabel); card.addView(speedBar)
 
-            card.addView(subHint("مکث بین آیتم‌ها"))
+            card.addView(subHint("مکث بین آیتم‌ها (پیشنهاد: حداقل ۳۰۰ برای جلوگیری از خطای ارسال تلگرام)"))
             val delayLabel = TextView(this)
-            val delayBar = SeekBar(this); delayBar.max = 2000
-            val delay = prefs.getInt("enter_delay_ms", 120); delayBar.progress = delay
+            val delayBar = SeekBar(this); delayBar.max = 3000
+            val delay = prefs.getInt("enter_delay_ms", 350); delayBar.progress = delay
             delayLabel.text = "$delay میلی‌ثانیه"
             delayBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
@@ -338,7 +334,7 @@ class MainActivity : Activity() {
     private fun buildLabelsTab() {
         layoutIds.forEach { layoutId ->
             contentContainer.addView(card("✏ متن‌های ${layoutNames[layoutId]}", "#8D6E63") { card ->
-                val kb = cachedKeyboard(layoutId) // از کش — دیگه هر بار ساخته نمیشه، رفع کندی
+                val kb = cachedKeyboard(layoutId)
                 val seenCodes = mutableSetOf<Int>()
 
                 kb.keys.forEach { key ->
