@@ -21,7 +21,6 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
 
     private val handler = Handler(Looper.getMainLooper())
 
-    // ---- ماشین‌حالت اتو (به‌جای بازگشتی، همه‌چیز صریح و سطح کلاس) ----
     private var autoActive = false
     private var autoItems: List<String> = emptyList()
     private var autoLineIndex = 0
@@ -33,12 +32,6 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
         const val KEYCODE_MACRO_NEXT = -10
         const val KEYCODE_MACRO_RESET = -11
     }
-
-    // نگاشت کلیدهای بلااستفاده‌ی هر چیدمان به اتو/ریست، بدون تغییر ظاهری
-    private val longPressAutoMap = mapOf(
-        "DOLINE" to (10000 to 5128),           // long-press روی @ = اتو ، روی # = ریست
-        "PCBOARD" to ('='.code to '؟'.code)    // long-press روی = = اتو ، روی ؟ = ریست
-    )
 
     override fun onCreateInputView(): View {
         val view = layoutInflater.inflate(R.layout.keyboard_view, null) as GKeyboardView
@@ -101,7 +94,8 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
         val overrides = mutableMapOf<Int, String>()
         activeKeyboard.keys.mapNotNull { it.codes.getOrNull(0) }.distinct().forEach { code ->
             if (p.getBoolean("label_enabled_${currentLayoutId}_$code", false)) {
-                p.getString("label_${currentLayoutId}_$code", null)?.let { if (it.isNotBlank()) overrides[code] = it }
+                val custom = p.getString("label_${currentLayoutId}_$code", null)
+                if (!custom.isNullOrBlank()) overrides[code] = custom
             }
         }
 
@@ -127,16 +121,6 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
             KEYCODE_MACRO_NEXT -> tryStartAuto(ic)
             KEYCODE_MACRO_RESET -> resetMacro()
             else -> ic.commitText(code.toChar().toString(), 1)
-        }
-    }
-
-    override fun onKeyLongPressed(code: Int): Boolean {
-        val ic: InputConnection = currentInputConnection ?: return false
-        val mapping = longPressAutoMap[currentLayoutId] ?: return false
-        return when (code) {
-            mapping.first -> { tryStartAuto(ic); true }
-            mapping.second -> { resetMacro(); true }
-            else -> false
         }
     }
 
@@ -178,19 +162,13 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
                     return
                 }
 
-                // آیتم تموم شد → Enter واقعی بزن
                 keyboardView.clearHighlight()
                 sendRealEnter(ic)
                 val nextIndex = (autoLineIndex + 1) % autoItems.size
                 prefs().edit().putInt("macro_line_index", nextIndex).apply()
 
-                if (!autoFullMode) {
-                    // حالت حرف‌به‌حرف: فقط همین یک آیتم، بعدش کامل متوقف شو
-                    autoActive = false
-                    return
-                }
+                if (!autoFullMode) { autoActive = false; return }
 
-                // حالت کامل: برو سراغ آیتم بعدی، خودکار و بدون نیاز به کلیک
                 autoLineIndex = nextIndex
                 autoCharIndex = 0
                 handler.postDelayed(this, enterDelayMs())
