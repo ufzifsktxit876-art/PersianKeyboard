@@ -155,13 +155,13 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
             MotionEvent.ACTION_MOVE -> {
                 val key = findKeyAt(kb, x, y)
                 if (key !== pressedKey) {
-                    stopRepeat(); cancelLongPress()
+                    stopRepeat(); cancelPendingLongPress()
                     pressedKey = null; invalidate()
                 }
                 return true
             }
             MotionEvent.ACTION_UP -> {
-                stopRepeat(); cancelLongPress()
+                stopRepeat(); cancelPendingLongPress()
                 val key = pressedKey
                 pressedKey = null
                 invalidate()
@@ -172,7 +172,7 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
-                stopRepeat(); cancelLongPress()
+                stopRepeat(); cancelPendingLongPress()
                 pressedKey = null; longPressConsumed = false; invalidate()
                 return true
             }
@@ -193,7 +193,7 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
     }
 
     private fun stopRepeat() { repeatRunnable?.let { handler.removeCallbacks(it) }; repeatRunnable = null }
-    private fun cancelLongPress() { longPressRunnable?.let { handler.removeCallbacks(it) }; longPressRunnable = null }
+    private fun cancelPendingLongPress() { longPressRunnable?.let { handler.removeCallbacks(it) }; longPressRunnable = null }
 
     private fun findKeyAt(kb: Keyboard, x: Int, y: Int): Keyboard.Key? {
         for (key in kb.keys) {
