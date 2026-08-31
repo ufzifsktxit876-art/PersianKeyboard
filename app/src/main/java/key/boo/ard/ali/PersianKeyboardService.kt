@@ -26,6 +26,7 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
     private var autoLineIndex = 0
     private var autoCharIndex = 0
     private var autoFullMode = false
+    private var autoRepeatsLeft = 1
     private var autoRunnable: Runnable? = null
 
     companion object {
@@ -43,7 +44,11 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
-        if (::keyboardView.isInitialized) { stopAuto(); loadKeyboardForCurrentSettings() }
+        if (::keyboardView.isInitialized) {
+            // مهم: اگه این فقط یه "ری‌استارت" داخلی اپه (مثلاً بعد از Send تو تلگرام)، اتو رو قطع نکن.
+            if (!restarting) stopAuto()
+            loadKeyboardForCurrentSettings()
+        }
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {
@@ -70,7 +75,7 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
     }
 
     private fun applyScale(kb: Keyboard, scalePercent: Int) {
-        val scale = scalePercent.coerceIn(60, 150) / 100f
+        val scale = scalePercent.coerceIn(70, 130) / 100f
         if (scale == 1f) return
         for (key in kb.keys) {
             key.x = (key.x * scale).toInt(); key.y = (key.y * scale).toInt()
@@ -84,7 +89,7 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
         val keyColor = p.getInt(prefix + "key_color", Color.WHITE)
         val pressColor = p.getInt(prefix + "press_color", Color.parseColor("#D0D0D0"))
         val textColor = p.getInt(prefix + "text_color", Color.parseColor("#1F1F1F"))
-        val textSizeSp = p.getInt(prefix + "text_size", 22).toFloat()
+        val textSizeSp = p.getInt(prefix + "text_size", 20).toFloat()
         val textSizePx = textSizeSp * resources.displayMetrics.scaledDensity
 
         val bgBitmap = loadBitmap(p.getString(prefix + "bg_texture", null))
@@ -99,8 +104,7 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
             }
         }
 
-        val highlightColor = Color.argb(90, Color.red(pressColor), Color.green(pressColor), Color.blue(pressColor))
-        keyboardView.setStyle(bgBitmap, bgColor, keyIdleBitmap, keyColor, keyClickBitmap, pressColor, textColor, textSizePx, overrides, highlightColor)
+        keyboardView.setStyle(bgBitmap, bgColor, keyIdleBitmap, keyColor, keyClickBitmap, pressColor, textColor, textSizePx, overrides)
     }
 
     private val bitmapCache = HashMap<String, Bitmap?>()
@@ -136,6 +140,7 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
 
     private fun typingSpeedMs(): Long = prefs().getInt("auto_speed_ms", 45).toLong().coerceAtLeast(10)
     private fun enterDelayMs(): Long = prefs().getInt("enter_delay_ms", 120).toLong().coerceAtLeast(0)
+    private fun repeatCount(): Int = prefs().getInt("auto_repeat_count", 1).coerceAtLeast(1)
 
     private fun startAuto(ic: InputConnection) {
         if (autoActive) return
@@ -147,6 +152,7 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
         autoLineIndex = prefs().getInt("macro_line_index", 0) % items.size
         autoCharIndex = 0
         autoFullMode = prefs().getString("auto_mode", "FULL") == "FULL"
+        autoRepeatsLeft = if (autoFullMode) repeatCount() else 1
 
         autoRunnable = object : Runnable {
             override fun run() {
@@ -156,18 +162,23 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
                 if (autoCharIndex < currentItem.length) {
                     val ch = currentItem[autoCharIndex]
                     ic.commitText(ch.toString(), 1)
-                    highlightKeyFor(ch)
+                    keyboardView.setAutoPressedKeyByCode(ch.code)
                     autoCharIndex++
                     handler.postDelayed(this, typingSpeedMs())
                     return
                 }
 
-                keyboardView.clearHighlight()
+                keyboardView.setAutoPressedKeyByCode(null)
                 sendRealEnter(ic)
                 val nextIndex = (autoLineIndex + 1) % autoItems.size
                 prefs().edit().putInt("macro_line_index", nextIndex).apply()
 
                 if (!autoFullMode) { autoActive = false; return }
+
+                if (nextIndex == 0) {
+                    autoRepeatsLeft--
+                    if (autoRepeatsLeft <= 0) { autoActive = false; return }
+                }
 
                 autoLineIndex = nextIndex
                 autoCharIndex = 0
@@ -177,16 +188,11 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
         handler.post(autoRunnable!!)
     }
 
-    private fun highlightKeyFor(ch: Char) {
-        val key = activeKeyboard.keys.firstOrNull { it.codes.isNotEmpty() && it.codes[0] == ch.code }
-        if (key != null) keyboardView.setHighlight(key.x, key.y, key.width, key.height)
-    }
-
     private fun stopAuto() {
         autoActive = false
         autoRunnable?.let { handler.removeCallbacks(it) }
         autoRunnable = null
-        if (::keyboardView.isInitialized) keyboardView.clearHighlight()
+        if (::keyboardView.isInitialized) keyboardView.setAutoPressedKeyByCode(null)
     }
 
     private fun resetMacro() {
