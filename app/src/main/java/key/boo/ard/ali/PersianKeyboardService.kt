@@ -45,7 +45,6 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
         if (::keyboardView.isInitialized) {
-            // مهم: اگه این فقط یه "ری‌استارت" داخلی اپه (مثلاً بعد از Send تو تلگرام)، اتو رو قطع نکن.
             if (!restarting) stopAuto()
             loadKeyboardForCurrentSettings()
         }
@@ -78,8 +77,8 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
         val scale = scalePercent.coerceIn(70, 130) / 100f
         if (scale == 1f) return
         for (key in kb.keys) {
-            key.x = (key.x * scale).toInt(); key.y = (key.y * scale).toInt()
-            key.width = (key.width * scale).toInt(); key.height = (key.height * scale).toInt()
+            key.y = (key.y * scale).toInt()
+            key.height = (key.height * scale).toInt()
         }
     }
 
@@ -121,16 +120,16 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
         val ic: InputConnection = currentInputConnection ?: return
         when (code) {
             Keyboard.KEYCODE_DELETE -> ic.deleteSurroundingText(1, 0)
-            Keyboard.KEYCODE_DONE -> sendRealEnter(ic)
-            KEYCODE_MACRO_NEXT -> tryStartAuto(ic)
+            Keyboard.KEYCODE_DONE -> sendRealEnter(currentInputConnection)
+            KEYCODE_MACRO_NEXT -> tryStartAuto()
             KEYCODE_MACRO_RESET -> resetMacro()
             else -> ic.commitText(code.toChar().toString(), 1)
         }
     }
 
-    private fun tryStartAuto(ic: InputConnection) {
+    private fun tryStartAuto() {
         if (!prefs().getBoolean("auto_master_enabled", true)) return
-        startAuto(ic)
+        startAuto()
     }
 
     private fun getItems(): List<String> {
@@ -139,10 +138,10 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
     }
 
     private fun typingSpeedMs(): Long = prefs().getInt("auto_speed_ms", 45).toLong().coerceAtLeast(10)
-    private fun enterDelayMs(): Long = prefs().getInt("enter_delay_ms", 120).toLong().coerceAtLeast(0)
+    private fun enterDelayMs(): Long = prefs().getInt("enter_delay_ms", 350).toLong().coerceAtLeast(0)
     private fun repeatCount(): Int = prefs().getInt("auto_repeat_count", 1).coerceAtLeast(1)
 
-    private fun startAuto(ic: InputConnection) {
+    private fun startAuto() {
         if (autoActive) return
         val items = getItems()
         if (items.isEmpty()) return
@@ -157,6 +156,9 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
         autoRunnable = object : Runnable {
             override fun run() {
                 if (!autoActive) return
+                val ic = currentInputConnection
+                if (ic == null) { autoActive = false; return }
+
                 val currentItem = autoItems[autoLineIndex]
 
                 if (autoCharIndex < currentItem.length) {
@@ -200,11 +202,12 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
         prefs().edit().putInt("macro_line_index", 0).apply()
     }
 
-    private fun sendRealEnter(ic: InputConnection) {
+    private fun sendRealEnter(ic: InputConnection?) {
+        if (ic == null) return
         val info = currentInputEditorInfo
-        val isMultiline = ((info?.inputType ?: 0) and EditorInfo.TYPE_TEXT_FLAG_MULTI_LINE) != 0
         val action = (info?.imeOptions ?: 0) and EditorInfo.IME_MASK_ACTION
-        if (!isMultiline && action != EditorInfo.IME_ACTION_NONE && action != EditorInfo.IME_ACTION_UNSPECIFIED) {
+        if (action == EditorInfo.IME_ACTION_SEND || action == EditorInfo.IME_ACTION_DONE ||
+            action == EditorInfo.IME_ACTION_GO || action == EditorInfo.IME_ACTION_NEXT) {
             ic.performEditorAction(action)
         } else {
             ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
