@@ -16,12 +16,17 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
     }
 
     var noPressVisualCodes: Set<Int> = setOf(-10, -11)
+    var userScale: Float = 1f
+        set(value) { field = value.coerceIn(0.7f, 1.3f); requestLayout(); invalidate() }
 
     var keyboard: Keyboard? = null
         set(value) { field = value; requestLayout(); invalidate() }
 
     var listener: OnKeyClickListener? = null
     private val handler = Handler(Looper.getMainLooper())
+
+    // عرض «طراحی‌شده»ی کیبورد — همون عرضی که کلاس Keyboard موقع محاسبه‌ی %p استفاده کرده (عرض کامل صفحه)
+    private val designWidthPx: Int = context.resources.displayMetrics.widthPixels
 
     private var bgBitmap: Bitmap? = null
     private var bgColor: Int = Color.parseColor("#E6E8EB")
@@ -38,6 +43,9 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
 
     private var pressedKey: Keyboard.Key? = null
     private var repeatRunnable: Runnable? = null
+
+    // ضریب فعلی رندر: عرض واقعی View تقسیم بر عرض طراحی، ضربدر ترجیح دستی کاربر
+    private var renderScale: Float = 1f
 
     init { setLayerType(LAYER_TYPE_HARDWARE, null) }
 
@@ -62,11 +70,13 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        val width = MeasureSpec.getSize(widthMeasureSpec)
-        val contentHeight = keyboard?.keys?.maxOfOrNull { it.y + it.height } ?: 200
-        val heightMode = MeasureSpec.getMode(heightMeasureSpec)
-        val height = if (heightMode == MeasureSpec.EXACTLY) MeasureSpec.getSize(heightMeasureSpec) else contentHeight
-        setMeasuredDimension(width, height)
+        val viewWidth = MeasureSpec.getSize(widthMeasureSpec)
+        val fitScale = if (designWidthPx > 0) viewWidth.toFloat() / designWidthPx.toFloat() else 1f
+        renderScale = fitScale * userScale
+
+        val designContentHeight = keyboard?.keys?.maxOfOrNull { it.y + it.height } ?: 200
+        val height = (designContentHeight * renderScale).toInt()
+        setMeasuredDimension(viewWidth, height)
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -75,6 +85,9 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
 
         if (bgBitmap != null) drawBitmapCover(canvas, bgBitmap!!, RectF(0f, 0f, width.toFloat(), height.toFloat()), 0f)
         else canvas.drawColor(bgColor)
+
+        canvas.save()
+        canvas.scale(renderScale, renderScale)
 
         for (key in kb.keys) {
             val code = key.codes.getOrNull(0) ?: 0
@@ -107,6 +120,7 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
                 }
             }
         }
+        canvas.restore()
     }
 
     private fun drawBitmapCover(canvas: Canvas, bmp: Bitmap, rect: RectF, radius: Float) {
@@ -123,7 +137,9 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         val kb = keyboard ?: return false
-        val x = event.x.toInt(); val y = event.y.toInt()
+        // مختصات لمس رو به فضای "طراحی" کیبورد برمی‌گردونیم (معکوس renderScale)
+        val x = (event.x / renderScale).toInt()
+        val y = (event.y / renderScale).toInt()
 
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
