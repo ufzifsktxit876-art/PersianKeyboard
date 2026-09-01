@@ -25,7 +25,6 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
     var listener: OnKeyClickListener? = null
     private val handler = Handler(Looper.getMainLooper())
 
-    // عرض «طراحی‌شده»ی کیبورد — همون عرضی که کلاس Keyboard موقع محاسبه‌ی %p استفاده کرده (عرض کامل صفحه)
     private val designWidthPx: Int = context.resources.displayMetrics.widthPixels
 
     private var bgBitmap: Bitmap? = null
@@ -41,10 +40,12 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
     private val keyPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
+    // اشیاء ثابت و قابل‌استفاده‌ی مجدد — هیچ تخصیص حافظه‌ی جدیدی حین رسم اتفاق نمی‌افته (رفع اصلی لگ)
+    private val reusableRect = RectF()
+    private val reusablePath = Path()
+
     private var pressedKey: Keyboard.Key? = null
     private var repeatRunnable: Runnable? = null
-
-    // ضریب فعلی رندر: عرض واقعی View تقسیم بر عرض طراحی، ضربدر ترجیح دستی کاربر
     private var renderScale: Float = 1f
 
     init { setLayerType(LAYER_TYPE_HARDWARE, null) }
@@ -64,16 +65,31 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
         invalidate()
     }
 
+    /** نسخه‌ی سبک: فقط ناحیه‌ی همون کلید رو invalidate می‌کنه، نه کل صفحه‌کلید. */
     fun setAutoPressedKeyByCode(code: Int?) {
-        pressedKey = if (code == null) null else keyboard?.keys?.firstOrNull { it.codes.getOrNull(0) == code }
-        invalidate()
+        val newKey = if (code == null) null else keyboard?.keys?.firstOrNull { it.codes.getOrNull(0) == code }
+        val oldKey = pressedKey
+        if (newKey === oldKey) return
+        pressedKey = newKey
+        invalidateKeyRegion(oldKey)
+        invalidateKeyRegion(newKey)
+    }
+
+    private fun invalidateKeyRegion(key: Keyboard.Key?) {
+        if (key == null) return
+        val pad = 6
+        invalidate(
+            ((key.x - pad) * renderScale).toInt(),
+            ((key.y - pad) * renderScale).toInt(),
+            ((key.x + key.width + pad) * renderScale).toInt(),
+            ((key.y + key.height + pad) * renderScale).toInt()
+        )
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val viewWidth = MeasureSpec.getSize(widthMeasureSpec)
         val fitScale = if (designWidthPx > 0) viewWidth.toFloat() / designWidthPx.toFloat() else 1f
         renderScale = fitScale * userScale
-
         val designContentHeight = keyboard?.keys?.maxOfOrNull { it.y + it.height } ?: 200
         val height = (designContentHeight * renderScale).toInt()
         setMeasuredDimension(viewWidth, height)
@@ -83,8 +99,10 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
         super.onDraw(canvas)
         val kb = keyboard ?: return
 
-        if (bgBitmap != null) drawBitmapCover(canvas, bgBitmap!!, RectF(0f, 0f, width.toFloat(), height.toFloat()), 0f)
-        else canvas.drawColor(bgColor)
+        if (bgBitmap != null) {
+            reusableRect.set(0f, 0f, width.toFloat(), height.toFloat())
+            drawBitmapCover(canvas, bgBitmap!!, reusableRect, 0f)
+        } else canvas.drawColor(bgColor)
 
         canvas.save()
         canvas.scale(renderScale, renderScale)
@@ -94,12 +112,15 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
             val canShowPress = code !in noPressVisualCodes
             val isPressed = canShowPress && key === pressedKey
 
-            val rect = RectF((key.x + 2).toFloat(), (key.y + 3).toFloat(), (key.x + key.width - 2).toFloat(), (key.y + key.height - 3).toFloat())
+            reusableRect.set(
+                (key.x + 2).toFloat(), (key.y + 3).toFloat(),
+                (key.x + key.width - 2).toFloat(), (key.y + key.height - 3).toFloat()
+            )
             val bmp = if (isPressed) keyClickBitmap else keyIdleBitmap
             val color = if (isPressed) keyClickColor else keyIdleColor
 
-            if (bmp != null) drawBitmapCover(canvas, bmp, rect, 14f)
-            else { keyPaint.color = color; canvas.drawRoundRect(rect, 14f, 14f, keyPaint) }
+            if (bmp != null) drawBitmapCover(canvas, bmp, reusableRect, 14f)
+            else { keyPaint.color = color; canvas.drawRoundRect(reusableRect, 14f, 14f, keyPaint) }
 
             if (key.icon != null) {
                 val icon = key.icon
@@ -125,8 +146,9 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
 
     private fun drawBitmapCover(canvas: Canvas, bmp: Bitmap, rect: RectF, radius: Float) {
         canvas.save()
-        val path = Path(); path.addRoundRect(rect, radius, radius, Path.Direction.CW)
-        canvas.clipPath(path)
+        reusablePath.reset()
+        reusablePath.addRoundRect(rect, radius, radius, Path.Direction.CW)
+        canvas.clipPath(reusablePath)
         val scale = maxOf(rect.width() / bmp.width, rect.height() / bmp.height)
         val scaledW = bmp.width * scale; val scaledH = bmp.height * scale
         val left = rect.left + (rect.width() - scaledW) / 2f
@@ -137,35 +159,43 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         val kb = keyboard ?: return false
-        // مختصات لمس رو به فضای "طراحی" کیبورد برمی‌گردونیم (معکوس renderScale)
         val x = (event.x / renderScale).toInt()
         val y = (event.y / renderScale).toInt()
 
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
                 val key = findKeyAt(kb, x, y)
+                val old = pressedKey
                 pressedKey = key
-                invalidate()
+                invalidateKeyRegion(old); invalidateKeyRegion(key)
                 if (key != null && key.repeatable) startRepeat(key)
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
                 val key = findKeyAt(kb, x, y)
-                if (key !== pressedKey) { stopRepeat(); pressedKey = null; invalidate() }
+                if (key !== pressedKey) {
+                    stopRepeat()
+                    val old = pressedKey
+                    pressedKey = null
+                    invalidateKeyRegion(old)
+                }
                 return true
             }
             MotionEvent.ACTION_UP -> {
                 stopRepeat()
                 val key = pressedKey
                 pressedKey = null
-                invalidate()
+                invalidateKeyRegion(key)
                 if (key != null && !key.repeatable) {
                     key.codes.getOrNull(0)?.let { listener?.onKeyClicked(it) }
                 }
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
-                stopRepeat(); pressedKey = null; invalidate()
+                stopRepeat()
+                val old = pressedKey
+                pressedKey = null
+                invalidateKeyRegion(old)
                 return true
             }
         }
