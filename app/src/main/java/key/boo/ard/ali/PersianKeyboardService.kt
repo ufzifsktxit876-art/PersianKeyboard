@@ -18,6 +18,7 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
     private lateinit var keyboardView: GKeyboardView
     private lateinit var activeKeyboard: Keyboard
     private var currentLayoutId: String = "CUSTOM"
+    private var currentEditorInfo: EditorInfo? = null
 
     private val handler = Handler(Looper.getMainLooper())
 
@@ -28,12 +29,10 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
     private var autoFullMode = false
     private var autoRepeatsLeft = 1
     private var autoRunnable: Runnable? = null
-    private var batchOpen = false
 
     companion object {
         const val KEYCODE_MACRO_NEXT = -10
         const val KEYCODE_MACRO_RESET = -11
-        const val MIN_SAFE_TICK_MS = 4L
         const val MAX_TEXTURE_DIMENSION = 512
     }
 
@@ -47,6 +46,7 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
+        currentEditorInfo = info
         if (::keyboardView.isInitialized) {
             if (!restarting) stopAuto()
             loadKeyboardForCurrentSettings()
@@ -102,13 +102,11 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
 
     private val bitmapCache = HashMap<String, Bitmap?>()
 
-    /** عکس رو فقط یک‌بار، با اندازه‌ی نمونه‌گیری‌شده (downsampled) کش می‌کنیم — رسم بعدی‌ها بسیار سبک‌ترن. */
     private fun loadBitmap(uriString: String?): Bitmap? {
         if (uriString.isNullOrBlank()) return null
         if (bitmapCache.containsKey(uriString)) return bitmapCache[uriString]
         return try {
             val uri = Uri.parse(uriString)
-
             val boundsOptions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, boundsOptions) }
 
@@ -146,7 +144,7 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
     }
 
     private fun typingSpeedMs(): Long = prefs().getInt("auto_speed_ms", 45).toLong().coerceAtLeast(0L)
-    private fun enterDelayMs(): Long = prefs().getInt("enter_delay_ms", 350).toLong().coerceAtLeast(0)
+    private fun enterDelayMs(): Long = prefs().getInt("enter_delay_ms", 350).toLong().coerceAtLeast(50L)
     private fun repeatCount(): Int = prefs().getInt("auto_repeat_count", 1).coerceAtLeast(1)
     private fun highlightDuringAuto(): Boolean = prefs().getBoolean("auto_show_highlight", false)
 
@@ -162,7 +160,6 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
         autoFullMode = prefs().getString("auto_mode", "FULL") == "FULL"
         autoRepeatsLeft = if (autoFullMode) repeatCount() else 1
 
-        openBatchIfNeeded()
         val showHighlight = highlightDuringAuto()
 
         autoRunnable = object : Runnable {
@@ -175,75 +172,78 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
                 val speed = typingSpeedMs()
 
                 if (speed <= 0L) {
-                    // حالت فوق‌سریع (سرعت = ۰): کل متن باقی‌مونده یکجا و در یک ضربه commit می‌شه،
-                    // بدون هیچ رفت‌وبرگشتی حرف‌به‌حرف با Handler — پس هیچ لگی ایجاد نمی‌کنه
+                    // حالت فوق‌سریع (سرعت = ۰): کل متن یکجا commit می‌شه
                     if (autoCharIndex < currentItem.length) {
                         ic.commitText(currentItem.substring(autoCharIndex), 1)
                         autoCharIndex = currentItem.length
                     }
-                } else if (autoCharIndex < currentItem.length) {
+                    // یه تاخیر ۵۰ میلی‌ثانیه‌ای قبل از Enter که تلگرام/واتس‌اپ متن رو کامل ثبت کنه
+                    handler.postDelayed({
+                        if (!autoActive) return@postDelayed
+                        finishLineAndGoNext(ic)
+                    }, 50L)
+                    return
+                }
+
+                // حالت عادی: حرف‌به‌حرف
+                if (autoCharIndex < currentItem.length) {
                     val ch = currentItem[autoCharIndex]
                     ic.commitText(ch.toString(), 1)
-                    // فقط وقتی کاربر صریحاً هایلایت بصری رو خواسته invalidate صدا زده می‌شه —
-                    // در حالت پیش‌فرض (خاموش)، این تیک هیچ کار رسمی‌ای با UI thread نداره، پس رقابتی هم نداره
                     if (showHighlight) keyboardView.setAutoPressedKeyByCode(ch.code)
                     autoCharIndex++
                     handler.postDelayed(this, speed)
                     return
                 }
 
-                keyboardView.setAutoPressedKeyByCode(Keyboard.KEYCODE_DONE)
-                // اول batch رو می‌بندیم تا اپ مقصد (مثل تلگرام) متن نهایی رو کامل ثبت کنه،
-                // بعد Enter می‌زنیم — قبلاً برعکس بود و همین باعث می‌شد بعضی آیتم‌ها با سرعت بالا گم بشن
-                closeBatchIfNeeded(ic)
-                sendRealEnter(ic)
-
-                val nextIndex = (autoLineIndex + 1) % autoItems.size
-                prefs().edit().putInt("macro_line_index", nextIndex).apply()
-
-                val clearDelay = minOf(enterDelayMs(), 120L).coerceAtLeast(30L)
-                handler.postDelayed({ if (::keyboardView.isInitialized) keyboardView.setAutoPressedKeyByCode(null) }, clearDelay)
-
-                if (!autoFullMode) { autoActive = false; return }
-
-                if (nextIndex == 0) {
-                    autoRepeatsLeft--
-                    if (autoRepeatsLeft <= 0) { autoActive = false; return }
-                }
-
-                autoLineIndex = nextIndex
-                autoCharIndex = 0
-
-                autoRunnable?.let {
-                    handler.postDelayed({
-                        openBatchIfNeeded()
-                        it.run()
-                    }, enterDelayMs())
-                }
+                finishLineAndGoNext(ic)
             }
         }
         handler.post(autoRunnable!!)
     }
 
-    private fun openBatchIfNeeded() {
-        if (!batchOpen) {
-            currentInputConnection?.beginBatchEdit()
-            batchOpen = true
-        }
-    }
+    private fun finishLineAndGoNext(ic: InputConnection) {
+        if (!autoActive) return
 
-    private fun closeBatchIfNeeded(ic: InputConnection) {
-        if (batchOpen) {
-            ic.endBatchEdit()
-            batchOpen = false
+        keyboardView.setAutoPressedKeyByCode(Keyboard.KEYCODE_DONE)
+
+        // دکمه Send/Go/Search اپلیکیشن مقصد (مثل تلگرام) رو می‌زنیم
+        sendRealEnter(ic)
+
+        val nextIndex = (autoLineIndex + 1) % autoItems.size
+        prefs().edit().putInt("macro_line_index", nextIndex).apply()
+
+        val clearDelay = enterDelayMs().coerceAtMost(120L).coerceAtLeast(30L)
+        handler.postDelayed({
+            if (::keyboardView.isInitialized) keyboardView.setAutoPressedKeyByCode(null)
+        }, clearDelay)
+
+        if (!autoFullMode) {
+            autoActive = false
+            return
         }
+
+        if (nextIndex == 0) {
+            autoRepeatsLeft--
+            if (autoRepeatsLeft <= 0) {
+                autoActive = false
+                return
+            }
+        }
+
+        autoLineIndex = nextIndex
+        autoCharIndex = 0
+
+        handler.postDelayed({
+            if (autoActive) {
+                autoRunnable?.run()
+            }
+        }, enterDelayMs())
     }
 
     private fun stopAuto() {
         autoActive = false
         autoRunnable?.let { handler.removeCallbacks(it) }
         autoRunnable = null
-        if (batchOpen) { currentInputConnection?.endBatchEdit(); batchOpen = false }
         if (::keyboardView.isInitialized) keyboardView.setAutoPressedKeyByCode(null)
     }
 
@@ -254,7 +254,19 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
 
     private fun sendRealEnter(ic: InputConnection?) {
         if (ic == null) return
-        ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
-        ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
+
+        // برای تلگرام/واتس‌اپ/اینستاگرام: action button (Send/Go/Search) رو می‌زنیم
+        val action = currentEditorInfo?.imeOptions?.and(EditorInfo.IME_MASK_ACTION)
+        val hasAction = action != null &&
+                        action != EditorInfo.IME_ACTION_NONE &&
+                        action != EditorInfo.IME_ACTION_UNSPECIFIED
+
+        if (hasAction) {
+            ic.performEditorAction(action!!)
+        } else {
+            // Fallback به Enter معمولی
+            ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
+            ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
+        }
     }
 }
