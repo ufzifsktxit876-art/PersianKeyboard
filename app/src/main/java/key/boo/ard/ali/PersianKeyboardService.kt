@@ -193,8 +193,10 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
                 }
 
                 keyboardView.setAutoPressedKeyByCode(Keyboard.KEYCODE_DONE)
-                sendRealEnter(ic)
+                // اول batch رو می‌بندیم تا اپ مقصد (مثل تلگرام) متن نهایی رو کامل ثبت کنه،
+                // بعد Enter می‌زنیم — قبلاً برعکس بود و همین باعث می‌شد بعضی آیتم‌ها با سرعت بالا گم بشن
                 closeBatchIfNeeded(ic)
+                sendRealEnter(ic)
 
                 val nextIndex = (autoLineIndex + 1) % autoItems.size
                 prefs().edit().putInt("macro_line_index", nextIndex).apply()
