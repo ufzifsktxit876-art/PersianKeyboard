@@ -145,7 +145,7 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
         return raw.split("\n").filter { it.isNotBlank() }
     }
 
-    private fun typingSpeedMs(): Long = prefs().getInt("auto_speed_ms", 45).toLong().coerceAtLeast(MIN_SAFE_TICK_MS)
+    private fun typingSpeedMs(): Long = prefs().getInt("auto_speed_ms", 45).toLong().coerceAtLeast(0L)
     private fun enterDelayMs(): Long = prefs().getInt("enter_delay_ms", 350).toLong().coerceAtLeast(0)
     private fun repeatCount(): Int = prefs().getInt("auto_repeat_count", 1).coerceAtLeast(1)
     private fun highlightDuringAuto(): Boolean = prefs().getBoolean("auto_show_highlight", false)
@@ -172,15 +172,23 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
                 if (ic == null) { autoActive = false; return }
 
                 val currentItem = autoItems[autoLineIndex]
+                val speed = typingSpeedMs()
 
-                if (autoCharIndex < currentItem.length) {
+                if (speed <= 0L) {
+                    // حالت فوق‌سریع (سرعت = ۰): کل متن باقی‌مونده یکجا و در یک ضربه commit می‌شه،
+                    // بدون هیچ رفت‌وبرگشتی حرف‌به‌حرف با Handler — پس هیچ لگی ایجاد نمی‌کنه
+                    if (autoCharIndex < currentItem.length) {
+                        ic.commitText(currentItem.substring(autoCharIndex), 1)
+                        autoCharIndex = currentItem.length
+                    }
+                } else if (autoCharIndex < currentItem.length) {
                     val ch = currentItem[autoCharIndex]
                     ic.commitText(ch.toString(), 1)
                     // فقط وقتی کاربر صریحاً هایلایت بصری رو خواسته invalidate صدا زده می‌شه —
                     // در حالت پیش‌فرض (خاموش)، این تیک هیچ کار رسمی‌ای با UI thread نداره، پس رقابتی هم نداره
                     if (showHighlight) keyboardView.setAutoPressedKeyByCode(ch.code)
                     autoCharIndex++
-                    handler.postDelayed(this, typingSpeedMs())
+                    handler.postDelayed(this, speed)
                     return
                 }
 
