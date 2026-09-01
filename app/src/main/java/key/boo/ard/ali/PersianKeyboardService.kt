@@ -33,9 +33,8 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
     companion object {
         const val KEYCODE_MACRO_NEXT = -10
         const val KEYCODE_MACRO_RESET = -11
-        // حداقل فاصله‌ی واقعی داخلی بین دو ارسال IPC — از فلود‌شدن ارتباط با اپ مقصد جلوگیری می‌کنه،
-        // بدون این‌که هیچ‌کدوم از رفتارهای بصری (کلیک تک‌تک، هایلایت، اینتر واقعی) حذف بشه
         const val MIN_SAFE_TICK_MS = 4L
+        const val MAX_TEXTURE_DIMENSION = 512
     }
 
     override fun onCreateInputView(): View {
@@ -102,12 +101,26 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
     }
 
     private val bitmapCache = HashMap<String, Bitmap?>()
+
+    /** عکس رو فقط یک‌بار، با اندازه‌ی نمونه‌گیری‌شده (downsampled) کش می‌کنیم — رسم بعدی‌ها بسیار سبک‌ترن. */
     private fun loadBitmap(uriString: String?): Bitmap? {
         if (uriString.isNullOrBlank()) return null
         if (bitmapCache.containsKey(uriString)) return bitmapCache[uriString]
         return try {
-            val bmp = contentResolver.openInputStream(Uri.parse(uriString))?.use { BitmapFactory.decodeStream(it) }
-            bitmapCache[uriString] = bmp; bmp
+            val uri = Uri.parse(uriString)
+
+            val boundsOptions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, boundsOptions) }
+
+            var sampleSize = 1
+            val longestSide = maxOf(boundsOptions.outWidth, boundsOptions.outHeight)
+            while (longestSide / sampleSize > MAX_TEXTURE_DIMENSION) sampleSize *= 2
+
+            val decodeOptions = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+            val bmp = contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, decodeOptions) }
+
+            bitmapCache[uriString] = bmp
+            bmp
         } catch (_: Exception) { null }
     }
 
@@ -132,10 +145,10 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
         return raw.split("\n").filter { it.isNotBlank() }
     }
 
-    // سرعتی که کاربر تنظیم کرده همیشه محترمه؛ فقط یه کف امنیتی نامرئی برای پایداری IPC داره
     private fun typingSpeedMs(): Long = prefs().getInt("auto_speed_ms", 45).toLong().coerceAtLeast(MIN_SAFE_TICK_MS)
     private fun enterDelayMs(): Long = prefs().getInt("enter_delay_ms", 350).toLong().coerceAtLeast(0)
     private fun repeatCount(): Int = prefs().getInt("auto_repeat_count", 1).coerceAtLeast(1)
+    private fun highlightDuringAuto(): Boolean = prefs().getBoolean("auto_show_highlight", false)
 
     private fun startAuto() {
         if (autoActive) return
@@ -150,6 +163,7 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
         autoRepeatsLeft = if (autoFullMode) repeatCount() else 1
 
         openBatchIfNeeded()
+        val showHighlight = highlightDuringAuto()
 
         autoRunnable = object : Runnable {
             override fun run() {
@@ -159,17 +173,17 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
 
                 val currentItem = autoItems[autoLineIndex]
 
-                // همیشه حرف‌به‌حرف — کلیک واقعی روی هر حرف، هایلایت واقعی، بدون هیچ میان‌بر
                 if (autoCharIndex < currentItem.length) {
                     val ch = currentItem[autoCharIndex]
                     ic.commitText(ch.toString(), 1)
-                    keyboardView.setAutoPressedKeyByCode(ch.code)
+                    // فقط وقتی کاربر صریحاً هایلایت بصری رو خواسته invalidate صدا زده می‌شه —
+                    // در حالت پیش‌فرض (خاموش)، این تیک هیچ کار رسمی‌ای با UI thread نداره، پس رقابتی هم نداره
+                    if (showHighlight) keyboardView.setAutoPressedKeyByCode(ch.code)
                     autoCharIndex++
                     handler.postDelayed(this, typingSpeedMs())
                     return
                 }
 
-                // پایان آیتم: کلیک واقعی روی خود دکمه‌ی Enter + ارسال واقعی KeyEvent
                 keyboardView.setAutoPressedKeyByCode(Keyboard.KEYCODE_DONE)
                 sendRealEnter(ic)
                 closeBatchIfNeeded(ic)
@@ -201,8 +215,6 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
         handler.post(autoRunnable!!)
     }
 
-    /** beginBatchEdit به اپ مقصد می‌گه: چند تغییر پشت‌سرهم میاد، تا پایان batch صبر کن و یکجا پردازش کن.
-     *  این دقیقاً همون روشیه که جلوی جاافتادن حروف رو توی اپ‌هایی مثل تلگرام موقع تایپ سریع می‌گیره. */
     private fun openBatchIfNeeded() {
         if (!batchOpen) {
             currentInputConnection?.beginBatchEdit()
