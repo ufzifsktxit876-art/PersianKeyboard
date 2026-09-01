@@ -15,7 +15,6 @@ import android.provider.Settings
 import android.text.Editable
 import android.text.TextWatcher
 import android.view.Gravity
-import android.view.View
 import android.widget.*
 
 class MainActivity : Activity() {
@@ -245,14 +244,13 @@ class MainActivity : Activity() {
             colorInputWithPicker(card, "حالت فشرده", prefix + "press_color_hex", "#D0D0D0")
             colorInputWithPicker(card, "نوشته‌ها", prefix + "text_color_hex", "#1F1F1F")
 
-            card.addView(subHint("تصاویر (اختیاری)"))
+            card.addView(subHint("تصاویر (اختیاری) — خودکار بازنمونه‌گیری میشن تا لگ ایجاد نکنن"))
             card.addView(imageBtn("تصویر پس‌زمینه") { pickImageFor(prefix + "bg_texture") })
             card.addView(imageBtn("تصویر دکمه‌ها") { pickImageFor(prefix + "key_idle_texture") })
             card.addView(imageBtn("تصویر حالت کلیک") { pickImageFor(prefix + "key_click_texture") })
         })
     }
 
-    /** ردیف رنگ + مربع طیف کشیدنی + کد Hex قابل تایپ — همه با هم زنده هماهنگ و بلافاصله ذخیره/اعمال میشن. */
     private fun colorInputWithPicker(parent: LinearLayout, label: String, hexKey: String, default: String) {
         val intKey = hexKey.removeSuffix("_hex")
 
@@ -337,14 +335,22 @@ class MainActivity : Activity() {
             modeGroup.setOnCheckedChangeListener { _, id -> prefs.edit().putString("auto_mode", if (id == 1002) "CHAR" else "FULL").apply() }
             card.addView(modeGroup)
 
-            card.addView(subHint("سرعت تایپ هر حرف (زیر ۱۵ = حالت فوق‌سریع، بدون لگ)"))
+            card.addView(subHint("نمایش هایلایت روی کلید حین تایپ خودکار"))
+            val highlightSwitch = Switch(this)
+            highlightSwitch.text = "نمایش هایلایت (کمی کندتر، ولی قابل‌مشاهده)"
+            highlightSwitch.isChecked = prefs.getBoolean("auto_show_highlight", false)
+            highlightSwitch.setOnCheckedChangeListener { _, checked -> prefs.edit().putBoolean("auto_show_highlight", checked).apply() }
+            card.addView(highlightSwitch)
+            card.addView(hint("پیش‌فرض خاموش = سریع‌ترین و بدون‌لگ‌ترین حالت ممکن؛ فقط Enter در پایان هر آیتم هایلایت میشه."))
+
+            card.addView(subHint("سرعت تایپ هر حرف"))
             val speedLabel = TextView(this)
             val speedBar = SeekBar(this); speedBar.max = 300
             val speed = prefs.getInt("auto_speed_ms", 45); speedBar.progress = speed
-            speedLabel.text = if (speed <= 15) "$speed میلی‌ثانیه (فوق‌سریع)" else "$speed میلی‌ثانیه"
+            speedLabel.text = "$speed میلی‌ثانیه"
             speedBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                    speedLabel.text = if (progress <= 15) "$progress میلی‌ثانیه (فوق‌سریع)" else "$progress میلی‌ثانیه"
+                    speedLabel.text = "$progress میلی‌ثانیه"
                     prefs.edit().putInt("auto_speed_ms", progress).apply()
                 }
                 override fun onStartTrackingTouch(seekBar: SeekBar?) {}
@@ -498,6 +504,10 @@ class MainActivity : Activity() {
         val l = TextView(this); l.text = label; l.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         val v = TextView(this); v.text = value; v.setTypeface(null, Typeface.BOLD)
         row.addView(l); row.addView(v); return row
+    }
+
+    private fun hint(text: String): TextView {
+        val t = TextView(this); t.text = text; t.textSize = 11f; t.setTextColor(Color.GRAY); t.setPadding(0, 6, 0, 6); return t
     }
 
     private fun subHint(text: String): TextView {
