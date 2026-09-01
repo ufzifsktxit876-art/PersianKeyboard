@@ -28,11 +28,14 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
     private var autoFullMode = false
     private var autoRepeatsLeft = 1
     private var autoRunnable: Runnable? = null
+    private var batchOpen = false
 
     companion object {
         const val KEYCODE_MACRO_NEXT = -10
         const val KEYCODE_MACRO_RESET = -11
-        const val FAST_MODE_THRESHOLD_MS = 15L
+        // حداقل فاصله‌ی واقعی داخلی بین دو ارسال IPC — از فلود‌شدن ارتباط با اپ مقصد جلوگیری می‌کنه،
+        // بدون این‌که هیچ‌کدوم از رفتارهای بصری (کلیک تک‌تک، هایلایت، اینتر واقعی) حذف بشه
+        const val MIN_SAFE_TICK_MS = 4L
     }
 
     override fun onCreateInputView(): View {
@@ -129,7 +132,8 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
         return raw.split("\n").filter { it.isNotBlank() }
     }
 
-    private fun typingSpeedMs(): Long = prefs().getInt("auto_speed_ms", 45).toLong().coerceAtLeast(0)
+    // سرعتی که کاربر تنظیم کرده همیشه محترمه؛ فقط یه کف امنیتی نامرئی برای پایداری IPC داره
+    private fun typingSpeedMs(): Long = prefs().getInt("auto_speed_ms", 45).toLong().coerceAtLeast(MIN_SAFE_TICK_MS)
     private fun enterDelayMs(): Long = prefs().getInt("enter_delay_ms", 350).toLong().coerceAtLeast(0)
     private fun repeatCount(): Int = prefs().getInt("auto_repeat_count", 1).coerceAtLeast(1)
 
@@ -145,6 +149,8 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
         autoFullMode = prefs().getString("auto_mode", "FULL") == "FULL"
         autoRepeatsLeft = if (autoFullMode) repeatCount() else 1
 
+        openBatchIfNeeded()
+
         autoRunnable = object : Runnable {
             override fun run() {
                 if (!autoActive) return
@@ -152,57 +158,70 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
                 if (ic == null) { autoActive = false; return }
 
                 val currentItem = autoItems[autoLineIndex]
-                val speed = typingSpeedMs()
 
-                // حالت فوق‌سریع: کل کلمه یکجا، بدون حلقه‌ی حرف‌به‌حرف — صفر لگ حتی روی سرعت ۰
-                if (speed <= FAST_MODE_THRESHOLD_MS) {
-                    if (currentItem.isNotEmpty()) ic.commitText(currentItem, 1)
-                    proceedToEnter(ic)
-                    return
-                }
-
+                // همیشه حرف‌به‌حرف — کلیک واقعی روی هر حرف، هایلایت واقعی، بدون هیچ میان‌بر
                 if (autoCharIndex < currentItem.length) {
                     val ch = currentItem[autoCharIndex]
                     ic.commitText(ch.toString(), 1)
                     keyboardView.setAutoPressedKeyByCode(ch.code)
                     autoCharIndex++
-                    handler.postDelayed(this, speed)
+                    handler.postDelayed(this, typingSpeedMs())
                     return
                 }
 
-                proceedToEnter(ic)
+                // پایان آیتم: کلیک واقعی روی خود دکمه‌ی Enter + ارسال واقعی KeyEvent
+                keyboardView.setAutoPressedKeyByCode(Keyboard.KEYCODE_DONE)
+                sendRealEnter(ic)
+                closeBatchIfNeeded(ic)
+
+                val nextIndex = (autoLineIndex + 1) % autoItems.size
+                prefs().edit().putInt("macro_line_index", nextIndex).apply()
+
+                val clearDelay = minOf(enterDelayMs(), 120L).coerceAtLeast(30L)
+                handler.postDelayed({ if (::keyboardView.isInitialized) keyboardView.setAutoPressedKeyByCode(null) }, clearDelay)
+
+                if (!autoFullMode) { autoActive = false; return }
+
+                if (nextIndex == 0) {
+                    autoRepeatsLeft--
+                    if (autoRepeatsLeft <= 0) { autoActive = false; return }
+                }
+
+                autoLineIndex = nextIndex
+                autoCharIndex = 0
+
+                autoRunnable?.let {
+                    handler.postDelayed({
+                        openBatchIfNeeded()
+                        it.run()
+                    }, enterDelayMs())
+                }
             }
         }
         handler.post(autoRunnable!!)
     }
 
-    /** فیدبک بصری واقعی روی خود دکمه‌ی Enter + ارسال واقعی KeyEvent، بعد رفتن سراغ آیتم بعدی. */
-    private fun proceedToEnter(ic: InputConnection) {
-        keyboardView.setAutoPressedKeyByCode(Keyboard.KEYCODE_DONE)
-        sendRealEnter(ic)
-
-        val nextIndex = (autoLineIndex + 1) % autoItems.size
-        prefs().edit().putInt("macro_line_index", nextIndex).apply()
-
-        val clearDelay = minOf(enterDelayMs(), 120L).coerceAtLeast(30L)
-        handler.postDelayed({ if (::keyboardView.isInitialized) keyboardView.setAutoPressedKeyByCode(null) }, clearDelay)
-
-        if (!autoFullMode) { autoActive = false; return }
-
-        if (nextIndex == 0) {
-            autoRepeatsLeft--
-            if (autoRepeatsLeft <= 0) { autoActive = false; return }
+    /** beginBatchEdit به اپ مقصد می‌گه: چند تغییر پشت‌سرهم میاد، تا پایان batch صبر کن و یکجا پردازش کن.
+     *  این دقیقاً همون روشیه که جلوی جاافتادن حروف رو توی اپ‌هایی مثل تلگرام موقع تایپ سریع می‌گیره. */
+    private fun openBatchIfNeeded() {
+        if (!batchOpen) {
+            currentInputConnection?.beginBatchEdit()
+            batchOpen = true
         }
+    }
 
-        autoLineIndex = nextIndex
-        autoCharIndex = 0
-        autoRunnable?.let { handler.postDelayed(it, enterDelayMs()) }
+    private fun closeBatchIfNeeded(ic: InputConnection) {
+        if (batchOpen) {
+            ic.endBatchEdit()
+            batchOpen = false
+        }
     }
 
     private fun stopAuto() {
         autoActive = false
         autoRunnable?.let { handler.removeCallbacks(it) }
         autoRunnable = null
+        if (batchOpen) { currentInputConnection?.endBatchEdit(); batchOpen = false }
         if (::keyboardView.isInitialized) keyboardView.setAutoPressedKeyByCode(null)
     }
 
