@@ -32,6 +32,7 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
     companion object {
         const val KEYCODE_MACRO_NEXT = -10
         const val KEYCODE_MACRO_RESET = -11
+        const val FAST_MODE_THRESHOLD_MS = 15L
     }
 
     override fun onCreateInputView(): View {
@@ -69,7 +70,6 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
         val kb = Keyboard(this, resId)
         activeKeyboard = kb
         keyboardView.keyboard = kb
-        // اندازه دیگه با دستکاری مختصات نیست؛ مستقیم به موتور رندر داده میشه (بدون باگ زوم/جابه‌جایی)
         keyboardView.userScale = p.getInt("keyboard_scale", 100) / 100f
         applyStyle(p)
     }
@@ -129,7 +129,7 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
         return raw.split("\n").filter { it.isNotBlank() }
     }
 
-    private fun typingSpeedMs(): Long = prefs().getInt("auto_speed_ms", 45).toLong().coerceAtLeast(10)
+    private fun typingSpeedMs(): Long = prefs().getInt("auto_speed_ms", 45).toLong().coerceAtLeast(0)
     private fun enterDelayMs(): Long = prefs().getInt("enter_delay_ms", 350).toLong().coerceAtLeast(0)
     private fun repeatCount(): Int = prefs().getInt("auto_repeat_count", 1).coerceAtLeast(1)
 
@@ -152,34 +152,51 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
                 if (ic == null) { autoActive = false; return }
 
                 val currentItem = autoItems[autoLineIndex]
+                val speed = typingSpeedMs()
+
+                // حالت فوق‌سریع: کل کلمه یکجا، بدون حلقه‌ی حرف‌به‌حرف — صفر لگ حتی روی سرعت ۰
+                if (speed <= FAST_MODE_THRESHOLD_MS) {
+                    if (currentItem.isNotEmpty()) ic.commitText(currentItem, 1)
+                    proceedToEnter(ic)
+                    return
+                }
 
                 if (autoCharIndex < currentItem.length) {
                     val ch = currentItem[autoCharIndex]
                     ic.commitText(ch.toString(), 1)
                     keyboardView.setAutoPressedKeyByCode(ch.code)
                     autoCharIndex++
-                    handler.postDelayed(this, typingSpeedMs())
+                    handler.postDelayed(this, speed)
                     return
                 }
 
-                keyboardView.setAutoPressedKeyByCode(null)
-                sendRealEnter(ic)
-                val nextIndex = (autoLineIndex + 1) % autoItems.size
-                prefs().edit().putInt("macro_line_index", nextIndex).apply()
-
-                if (!autoFullMode) { autoActive = false; return }
-
-                if (nextIndex == 0) {
-                    autoRepeatsLeft--
-                    if (autoRepeatsLeft <= 0) { autoActive = false; return }
-                }
-
-                autoLineIndex = nextIndex
-                autoCharIndex = 0
-                handler.postDelayed(this, enterDelayMs())
+                proceedToEnter(ic)
             }
         }
         handler.post(autoRunnable!!)
+    }
+
+    /** فیدبک بصری واقعی روی خود دکمه‌ی Enter + ارسال واقعی KeyEvent، بعد رفتن سراغ آیتم بعدی. */
+    private fun proceedToEnter(ic: InputConnection) {
+        keyboardView.setAutoPressedKeyByCode(Keyboard.KEYCODE_DONE)
+        sendRealEnter(ic)
+
+        val nextIndex = (autoLineIndex + 1) % autoItems.size
+        prefs().edit().putInt("macro_line_index", nextIndex).apply()
+
+        val clearDelay = minOf(enterDelayMs(), 120L).coerceAtLeast(30L)
+        handler.postDelayed({ if (::keyboardView.isInitialized) keyboardView.setAutoPressedKeyByCode(null) }, clearDelay)
+
+        if (!autoFullMode) { autoActive = false; return }
+
+        if (nextIndex == 0) {
+            autoRepeatsLeft--
+            if (autoRepeatsLeft <= 0) { autoActive = false; return }
+        }
+
+        autoLineIndex = nextIndex
+        autoCharIndex = 0
+        autoRunnable?.let { handler.postDelayed(it, enterDelayMs()) }
     }
 
     private fun stopAuto() {
@@ -194,8 +211,6 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
         prefs().edit().putInt("macro_line_index", 0).apply()
     }
 
-    /** طبق درخواست صریح: همیشه یک KeyEvent واقعی Enter فرستاده میشه، نه performEditorAction —
-     *  چون توی بعضی فیلدها (از جمله تلگرام) اکشن‌های خاص باعث بسته‌شدن ناگهانی کیبورد می‌شدن. */
     private fun sendRealEnter(ic: InputConnection?) {
         if (ic == null) return
         ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
