@@ -59,7 +59,6 @@ class MainActivity : Activity() {
         root.orientation = LinearLayout.VERTICAL
         root.setBackgroundColor(Color.parseColor("#F0F1F5"))
 
-        // نوار بالا (سبک آبی گورگ)
         val topBar = LinearLayout(this)
         topBar.orientation = LinearLayout.HORIZONTAL
         topBar.setBackgroundColor(Color.parseColor("#1E88E5"))
@@ -79,7 +78,6 @@ class MainActivity : Activity() {
         scroll.addView(outer)
         root.addView(scroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
 
-        // پیش‌نمایش زنده‌ی بزرگ بالا (همیشه کیبورد فعلی رو دقیق و کامل نشون می‌ده)
         val previewCard = LinearLayout(this)
         previewCard.orientation = LinearLayout.VERTICAL
         previewCard.setPadding(4, 4, 4, 4)
@@ -89,7 +87,6 @@ class MainActivity : Activity() {
         previewCard.addView(previewView)
         outer.addView(previewCard, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(0, 0, 0, 24) })
 
-        // گرید کاشی‌های رنگی
         val tileDefs = listOf(
             Triple("📱", "دستگاه", "#42A5F5"),
             Triple("⌨", "چیدمان", "#AB47BC"),
@@ -98,8 +95,7 @@ class MainActivity : Activity() {
             Triple("✏", "متن‌ها", "#8D6E63"),
             Triple("🚀", "بهینه‌سازی", "#26A69A")
         )
-        val gridRows = tileDefs.chunked(3)
-        gridRows.forEach { rowItems ->
+        tileDefs.chunked(3).forEach { rowItems ->
             val row = LinearLayout(this)
             row.orientation = LinearLayout.HORIZONTAL
             row.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(0, 0, 0, 12) }
@@ -211,7 +207,6 @@ class MainActivity : Activity() {
                 override fun onStopTrackingTouch(seekBar: SeekBar?) {}
             })
             card.addView(scaleLabel); card.addView(scaleSeekBar)
-            card.addView(hint("پیش‌نمایش بالای صفحه هم زنده و هم‌زمان با این تغییر آپدیت می‌شه."))
         })
     }
 
@@ -243,33 +238,68 @@ class MainActivity : Activity() {
             card.addView(HorizontalScrollView(this).apply { addView(row) })
         })
 
-        pageContainer.addView(card("🎨 رنگ‌های دستی", "#EF5350") { card ->
-            val bgInput = colorInput(card, "پس‌زمینه کیبورد", prefix + "bg_color_hex", "#E6E8EB")
-            val keyInput = colorInput(card, "دکمه‌ها", prefix + "key_color_hex", "#FFFFFF")
-            val pressInput = colorInput(card, "حالت فشرده", prefix + "press_color_hex", "#D0D0D0")
-            val textInput = colorInput(card, "نوشته‌ها", prefix + "text_color_hex", "#1F1F1F")
+        pageContainer.addView(card("🎨 رنگ‌های دستی (بکش یا تایپ کن)", "#EF5350") { card ->
+            colorInputWithPicker(card, "پس‌زمینه کیبورد", prefix + "bg_color_hex", "#E6E8EB")
+            colorInputWithPicker(card, "دکمه‌ها", prefix + "key_color_hex", "#FFFFFF")
+            colorInputWithPicker(card, "حالت فشرده", prefix + "press_color_hex", "#D0D0D0")
+            colorInputWithPicker(card, "نوشته‌ها", prefix + "text_color_hex", "#1F1F1F")
+
             card.addView(subHint("تصاویر (اختیاری)"))
             card.addView(imageBtn("تصویر پس‌زمینه") { pickImageFor(prefix + "bg_texture") })
             card.addView(imageBtn("تصویر دکمه‌ها") { pickImageFor(prefix + "key_idle_texture") })
             card.addView(imageBtn("تصویر حالت کلیک") { pickImageFor(prefix + "key_click_texture") })
-            val saveBtn = Button(this)
-            saveBtn.text = "ذخیره و پیش‌نمایش"
-            saveBtn.setOnClickListener {
-                fun parse(hex: String, fallback: Int) = try { Color.parseColor(hex.trim()) } catch (_: Exception) { fallback }
-                prefs.edit()
-                    .putString(prefix + "bg_color_hex", bgInput.text.toString())
-                    .putString(prefix + "key_color_hex", keyInput.text.toString())
-                    .putString(prefix + "press_color_hex", pressInput.text.toString())
-                    .putString(prefix + "text_color_hex", textInput.text.toString())
-                    .putInt(prefix + "bg_color", parse(bgInput.text.toString(), Color.parseColor("#E6E8EB")))
-                    .putInt(prefix + "key_color", parse(keyInput.text.toString(), Color.WHITE))
-                    .putInt(prefix + "press_color", parse(pressInput.text.toString(), Color.parseColor("#D0D0D0")))
-                    .putInt(prefix + "text_color", parse(textInput.text.toString(), Color.parseColor("#1F1F1F")))
-                    .apply()
-                refreshPreview()
-                Toast.makeText(this, "ذخیره شد", Toast.LENGTH_SHORT).show()
+        })
+    }
+
+    /** ردیف رنگ + مربع طیف کشیدنی + کد Hex قابل تایپ — همه با هم زنده هماهنگ و بلافاصله ذخیره/اعمال میشن. */
+    private fun colorInputWithPicker(parent: LinearLayout, label: String, hexKey: String, default: String) {
+        val intKey = hexKey.removeSuffix("_hex")
+
+        val titleRow = LinearLayout(this)
+        titleRow.orientation = LinearLayout.HORIZONTAL
+        titleRow.setPadding(0, 18, 0, 6)
+        val l = TextView(this); l.text = label; l.setTypeface(null, Typeface.BOLD); l.textSize = 13f
+        l.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+
+        val swatch = View(this)
+        swatch.layoutParams = LinearLayout.LayoutParams(60, 60)
+        val currentHex = prefs.getString(hexKey, default) ?: default
+        val currentColor = try { Color.parseColor(currentHex) } catch (_: Exception) { Color.parseColor(default) }
+        swatch.background = GradientDrawable().apply { setColor(currentColor); cornerRadius = 10f }
+
+        val hexInput = EditText(this)
+        hexInput.setText(currentHex)
+        hexInput.layoutParams = LinearLayout.LayoutParams(180, LinearLayout.LayoutParams.WRAP_CONTENT)
+
+        titleRow.addView(l); titleRow.addView(swatch); titleRow.addView(hexInput)
+        parent.addView(titleRow)
+
+        val picker = ColorPickerView(this, null)
+        picker.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 140)
+        parent.addView(picker)
+        picker.post { picker.setColorExternally(currentColor) }
+
+        fun applyColor(color: Int, updateHexField: Boolean) {
+            val hex = String.format("#%06X", 0xFFFFFF and color)
+            if (updateHexField) hexInput.setText(hex)
+            prefs.edit().putString(hexKey, hex).putInt(intKey, color).apply()
+            swatch.background = GradientDrawable().apply { setColor(color); cornerRadius = 10f }
+            refreshPreview()
+        }
+
+        picker.onColorPicked = { color -> applyColor(color, updateHexField = true) }
+
+        hexInput.addTextChangedListener(object : TextWatcher {
+            override fun afterTextChanged(s: Editable?) {
+                val text = s.toString().trim()
+                val color = try { Color.parseColor(text) } catch (_: Exception) { null }
+                if (color != null) {
+                    picker.setColorExternally(color)
+                    applyColor(color, updateHexField = false)
+                }
             }
-            card.addView(saveBtn)
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
         })
     }
 
@@ -297,7 +327,7 @@ class MainActivity : Activity() {
             card.addView(saveBtn)
         })
 
-        pageContainer.addView(card("⚙ نحوه‌ی اجرا", "#26C6DA") { card ->
+        pageContainer.addView(card("⚙ نحوه‌ی اجرا و سرعت", "#26C6DA") { card ->
             val modeGroup = RadioGroup(this)
             modeGroup.orientation = RadioGroup.HORIZONTAL
             modeGroup.addView(RadioButton(this).apply { id = 1001; text = "کامل (پشت‌سرهم)" })
@@ -306,16 +336,15 @@ class MainActivity : Activity() {
             modeGroup.setOnCheckedChangeListener { _, id -> prefs.edit().putString("auto_mode", if (id == 1002) "CHAR" else "FULL").apply() }
             card.addView(modeGroup)
 
-            card.addView(subHint("سرعت تایپ هر حرف"))
+            card.addView(subHint("سرعت تایپ هر حرف (زیر ۱۵ = حالت فوق‌سریع، بدون لگ)"))
             val speedLabel = TextView(this)
             val speedBar = SeekBar(this); speedBar.max = 300
             val speed = prefs.getInt("auto_speed_ms", 45); speedBar.progress = speed
-            speedLabel.text = "$speed میلی‌ثانیه"
+            speedLabel.text = if (speed <= 15) "$speed میلی‌ثانیه (فوق‌سریع)" else "$speed میلی‌ثانیه"
             speedBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                    val v = progress.coerceAtLeast(10)
-                    speedLabel.text = "$v میلی‌ثانیه"
-                    prefs.edit().putInt("auto_speed_ms", v).apply()
+                    speedLabel.text = if (progress <= 15) "$progress میلی‌ثانیه (فوق‌سریع)" else "$progress میلی‌ثانیه"
+                    prefs.edit().putInt("auto_speed_ms", progress).apply()
                 }
                 override fun onStartTrackingTouch(seekBar: SeekBar?) {}
                 override fun onStopTrackingTouch(seekBar: SeekBar?) {}
@@ -355,7 +384,6 @@ class MainActivity : Activity() {
         })
     }
 
-    // فقط چیدمان انتخاب‌شده رو نشون میده (نه هر ۴ تا هم‌زمان) — رفع لگ/کرش
     private fun buildLabelsPage() {
         pageContainer.addView(card("✏ متن‌ها — انتخاب چیدمان", "#8D6E63") { card ->
             val group = RadioGroup(this)
@@ -399,7 +427,6 @@ class MainActivity : Activity() {
                 input.textSize = 12f
                 input.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
 
-                // ذخیره خودکار (بدون دکمه‌ی جدا، سبک‌تر برای گوشی‌های ضعیف‌تر)
                 input.addTextChangedListener(object : TextWatcher {
                     override fun afterTextChanged(s: Editable?) {
                         prefs.edit().putString(textKey, s.toString()).apply()
@@ -472,20 +499,8 @@ class MainActivity : Activity() {
         row.addView(l); row.addView(v); return row
     }
 
-    private fun hint(text: String): TextView {
-        val t = TextView(this); t.text = text; t.textSize = 11f; t.setTextColor(Color.GRAY); t.setPadding(0, 6, 0, 6); return t
-    }
-
     private fun subHint(text: String): TextView {
         val t = TextView(this); t.text = text; t.textSize = 12f; t.setTypeface(null, Typeface.BOLD); t.setPadding(0, 14, 0, 4); return t
-    }
-
-    private fun colorInput(parent: LinearLayout, label: String, key: String, default: String): EditText {
-        val row = LinearLayout(this); row.orientation = LinearLayout.HORIZONTAL
-        val l = TextView(this); l.text = label; l.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        val input = EditText(this); input.setText(prefs.getString(key, default))
-        input.layoutParams = LinearLayout.LayoutParams(220, LinearLayout.LayoutParams.WRAP_CONTENT)
-        row.addView(l); row.addView(input); parent.addView(row); return input
     }
 
     private fun imageBtn(label: String, onClick: () -> Unit): Button {
