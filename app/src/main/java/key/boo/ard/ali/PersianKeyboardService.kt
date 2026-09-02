@@ -146,13 +146,8 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
     }
 
     private fun typingSpeedMs(): Long = prefs().getInt("auto_speed_ms", 45).toLong().coerceAtLeast(0L)
-
-    // حداقل ۳۵ میلی‌ثانیه بین دو پیام (نه بین دو حرف) — این تنها جایی‌ست که واقعاً باید صبر کنیم،
-    // چون اونجاست که خطر قاطی‌شدن با پیام بعدی و فلود‌شدن تلگرام وجود داره. زیر این عدد نمی‌ره،
-    // حتی اگه اسلایدر رو صفر بذاری.
-    private fun enterDelayMs(): Long = prefs().getInt("enter_delay_ms", 350).toLong().coerceAtLeast(35L)
+    private fun enterDelayMs(): Long = prefs().getInt("enter_delay_ms", 350).toLong().coerceAtLeast(0L)
     private fun repeatCount(): Int = prefs().getInt("auto_repeat_count", 1).coerceAtLeast(1)
-    private fun highlightDuringAuto(): Boolean = prefs().getBoolean("auto_show_highlight", false)
 
     private fun startAuto() {
         if (autoActive) return
@@ -167,18 +162,46 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
         autoRepeatsLeft = if (autoFullMode) repeatCount() else 1
 
         openBatchIfNeeded()
-        val showHighlight = highlightDuringAuto()
+
+        // نکته‌ی مهم: از اینجا به بعد، در کل مسیر تایپ خودکار، هیچ‌جا setAutoPressedKeyByCode
+        // (هایلایت بصری کلید) صدا زده نمی‌شه. این تنها چیزی بود که به رندر/FPS گوشی وابسته بود؛
+        // با حذفش، سرعت واقعی دیگه به قدرت گرافیک یا نرخ‌فریم گوشی گره نخورده — فقط منطق و
+        // ارتباط با اپ مقصده، که رو هر گوشی‌ای (حتی ضعیف) یکسان و قابل‌پیش‌بینیه.
+
+        // بعد از Enter، به‌جای فقط یه تاخیر ثابتِ حدسی، واقعاً از تلگرام می‌پرسیم کادر خالی شده یا نه —
+        // ولی این‌بار سبک: حداکثر چند تا چک با فاصله‌ی معقول، نه صدها بار در ثانیه.
+        fun waitForFieldClearedThenAdvance(nextIndex: Int) {
+            val startTime = android.os.SystemClock.elapsedRealtime()
+            val maxWaitMs = 300L
+            val pollIntervalMs = 12L
+
+            val pollRunnable = object : Runnable {
+                override fun run() {
+                    if (!autoActive) return
+                    val ic2 = currentInputConnection
+                    if (ic2 == null) { autoActive = false; return }
+                    val remaining = ic2.getTextBeforeCursor(1, 0)
+                    val fieldCleared = remaining.isNullOrEmpty()
+                    val timedOut = android.os.SystemClock.elapsedRealtime() - startTime >= maxWaitMs
+                    if (fieldCleared || timedOut) {
+                        autoLineIndex = nextIndex
+                        autoCharIndex = 0
+                        openBatchIfNeeded()
+                        autoRunnable?.let { handler.post(it) }
+                    } else {
+                        handler.postDelayed(this, pollIntervalMs)
+                    }
+                }
+            }
+            handler.postDelayed(pollRunnable, enterDelayMs())
+        }
 
         fun finishItemAndAdvance(ic: InputConnection) {
-            keyboardView.setAutoPressedKeyByCode(Keyboard.KEYCODE_DONE)
             closeBatchIfNeeded(ic)
             sendRealEnter(ic)
 
             val nextIndex = (autoLineIndex + 1) % autoItems.size
             prefs().edit().putInt("macro_line_index", nextIndex).apply()
-
-            val clearDelay = minOf(enterDelayMs(), 120L)
-            handler.postDelayed({ if (::keyboardView.isInitialized) keyboardView.setAutoPressedKeyByCode(null) }, clearDelay)
 
             if (!autoFullMode) { autoActive = false; return }
 
@@ -187,17 +210,7 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
                 if (autoRepeatsLeft <= 0) { autoActive = false; return }
             }
 
-            autoLineIndex = nextIndex
-            autoCharIndex = 0
-
-            // یه فاصله‌ی ثابت و کوچیک (حداقل ۳۵ میلی‌ثانیه) قبل از پیام بعدی — بدون هیچ پرسش یا
-            // رفت‌وآمد اضافه‌ای با اپ مقصد. همین کافیه و روی گوشی‌های ضعیف هم سنگین نیست.
-            autoRunnable?.let {
-                handler.postDelayed({
-                    openBatchIfNeeded()
-                    it.run()
-                }, enterDelayMs())
-            }
+            waitForFieldClearedThenAdvance(nextIndex)
         }
 
         autoRunnable = object : Runnable {
@@ -208,12 +221,9 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
 
                 val currentItem = autoItems[autoLineIndex]
 
-                // تایپ واقعی و حرف‌به‌حرف — دقیقاً همون چیزی که می‌بینی داره تو کادر پیام نوشته می‌شه،
-                // نه یک‌جا کپی‌شده. با هایلایت کلید هم‌زمانه.
                 if (autoCharIndex < currentItem.length) {
                     val ch = currentItem[autoCharIndex]
                     ic.commitText(ch.toString(), 1)
-                    if (showHighlight) keyboardView.setAutoPressedKeyByCode(ch.code)
                     autoCharIndex++
                     handler.postDelayed(this, typingSpeedMs())
                     return
@@ -258,3 +268,4 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
         ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
     }
 }
+
