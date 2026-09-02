@@ -165,8 +165,38 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
         openBatchIfNeeded()
         val showHighlight = highlightDuringAuto()
 
-        // این تابع فقط کاری داره که واقعاً با اپ مقصد (تلگرام و امثالش) در ارتباطه: بستن batch و زدن Enter،
-        // و رفتن سراغ آیتم بعدی. از انیمیشن نمایشی کاملاً جداست، پس هیچ‌وقت به‌خاطر انیمیشن معطل/قاطی نمی‌شه.
+        // بعد از زدن Enter، به‌جای حدس‌زدن یه مدت‌زمان ثابت، واقعاً از خودِ اپ مقصد (تلگرام و امثالش)
+        // می‌پرسیم که آیا کادر پیام رو خالی کرده یا نه. فقط وقتی خالی شد (یعنی پیام رو واقعاً گرفته)
+        // سراغ آیتم بعدی می‌ریم — این دقیقاً همون چیزیه که جلوی قاطی‌شدن حروف بین دو آیتم رو می‌گیره،
+        // فارغ از اینکه سرعت رو چقدر تند گذاشته باشی.
+        fun waitForFieldClearedThenAdvance(nextIndex: Int) {
+            val startTime = android.os.SystemClock.elapsedRealtime()
+            val maxWaitMs = 400L
+            val pollIntervalMs = 6L
+
+            val pollRunnable = object : Runnable {
+                override fun run() {
+                    if (!autoActive) return
+                    val ic2 = currentInputConnection
+                    if (ic2 == null) { autoActive = false; return }
+                    val remaining = ic2.getTextBeforeCursor(1, 0)
+                    val fieldCleared = remaining.isNullOrEmpty()
+                    val timedOut = android.os.SystemClock.elapsedRealtime() - startTime >= maxWaitMs
+                    if (fieldCleared || timedOut) {
+                        autoLineIndex = nextIndex
+                        autoCharIndex = 0
+                        openBatchIfNeeded()
+                        autoRunnable?.let { handler.post(it) }
+                    } else {
+                        handler.postDelayed(this, pollIntervalMs)
+                    }
+                }
+            }
+            // اول همون فاصله‌ای که خودت تنظیم کردی رو رعایت می‌کنیم (برای حس و ریتم دلخواهت)،
+            // بعد شروع می‌کنیم به چک کردن خالی‌شدن واقعی کادر
+            handler.postDelayed(pollRunnable, enterDelayMs())
+        }
+
         fun finishItemAndAdvance(ic: InputConnection) {
             keyboardView.setAutoPressedKeyByCode(Keyboard.KEYCODE_DONE)
             closeBatchIfNeeded(ic)
@@ -185,15 +215,7 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
                 if (autoRepeatsLeft <= 0) { autoActive = false; return }
             }
 
-            autoLineIndex = nextIndex
-            autoCharIndex = 0
-
-            autoRunnable?.let {
-                handler.postDelayed({
-                    openBatchIfNeeded()
-                    it.run()
-                }, enterDelayMs())
-            }
+            waitForFieldClearedThenAdvance(nextIndex)
         }
 
         autoRunnable = object : Runnable {
@@ -204,32 +226,18 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
 
                 val currentItem = autoItems[autoLineIndex]
 
-                // متن کامل آیتم رو همیشه یکجا و در یک ضربه‌ی atomic می‌فرستیم — این تنها بخشیه که واقعاً
-                // با اپ مقصد در ارتباطه، پس هیچ‌وقت با آیتم بعدی قاطی یا گم نمی‌شه، فارغ از سرعت انتخابی.
-                if (currentItem.isNotEmpty()) ic.commitText(currentItem, 1)
-
-                if (showHighlight && currentItem.isNotEmpty()) {
-                    // این حلقه فقط برای نمایش بصریه: کلید به کلید روی خودِ کیبورد هایلایت می‌شه تا حسِ
-                    // «داره تایپ می‌کنه» رو نشون بده. هیچ commitText یا ارتباطی با اپ مقصد نداره،
-                    // پس هرچقدر هم سریع باشه نه لگ واقعی می‌سازه و نه ریسک قاطی/گم‌شدن متن.
-                    var i = 0
-                    val tickMs = typingSpeedMs().coerceAtLeast(15L)
-                    val highlightRunnable = object : Runnable {
-                        override fun run() {
-                            if (!autoActive) return
-                            if (i < currentItem.length) {
-                                keyboardView.setAutoPressedKeyByCode(currentItem[i].code)
-                                i++
-                                handler.postDelayed(this, tickMs)
-                            } else {
-                                finishItemAndAdvance(ic)
-                            }
-                        }
-                    }
-                    handler.post(highlightRunnable)
-                } else {
-                    finishItemAndAdvance(ic)
+                // تایپ واقعی و حرف‌به‌حرف — دقیقاً همون چیزی که می‌بینی داره تو کادر پیام نوشته می‌شه،
+                // نه یک‌جا کپی‌شده. با هایلایت کلید هم‌زمانه.
+                if (autoCharIndex < currentItem.length) {
+                    val ch = currentItem[autoCharIndex]
+                    ic.commitText(ch.toString(), 1)
+                    if (showHighlight) keyboardView.setAutoPressedKeyByCode(ch.code)
+                    autoCharIndex++
+                    handler.postDelayed(this, typingSpeedMs())
+                    return
                 }
+
+                finishItemAndAdvance(ic)
             }
         }
         handler.post(autoRunnable!!)
