@@ -146,7 +146,11 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
     }
 
     private fun typingSpeedMs(): Long = prefs().getInt("auto_speed_ms", 45).toLong().coerceAtLeast(0L)
-    private fun enterDelayMs(): Long = prefs().getInt("enter_delay_ms", 350).toLong().coerceAtLeast(0)
+
+    // حداقل ۳۵ میلی‌ثانیه بین دو پیام (نه بین دو حرف) — این تنها جایی‌ست که واقعاً باید صبر کنیم،
+    // چون اونجاست که خطر قاطی‌شدن با پیام بعدی و فلود‌شدن تلگرام وجود داره. زیر این عدد نمی‌ره،
+    // حتی اگه اسلایدر رو صفر بذاری.
+    private fun enterDelayMs(): Long = prefs().getInt("enter_delay_ms", 350).toLong().coerceAtLeast(35L)
     private fun repeatCount(): Int = prefs().getInt("auto_repeat_count", 1).coerceAtLeast(1)
     private fun highlightDuringAuto(): Boolean = prefs().getBoolean("auto_show_highlight", false)
 
@@ -165,38 +169,6 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
         openBatchIfNeeded()
         val showHighlight = highlightDuringAuto()
 
-        // بعد از زدن Enter، به‌جای حدس‌زدن یه مدت‌زمان ثابت، واقعاً از خودِ اپ مقصد (تلگرام و امثالش)
-        // می‌پرسیم که آیا کادر پیام رو خالی کرده یا نه. فقط وقتی خالی شد (یعنی پیام رو واقعاً گرفته)
-        // سراغ آیتم بعدی می‌ریم — این دقیقاً همون چیزیه که جلوی قاطی‌شدن حروف بین دو آیتم رو می‌گیره،
-        // فارغ از اینکه سرعت رو چقدر تند گذاشته باشی.
-        fun waitForFieldClearedThenAdvance(nextIndex: Int) {
-            val startTime = android.os.SystemClock.elapsedRealtime()
-            val maxWaitMs = 400L
-            val pollIntervalMs = 6L
-
-            val pollRunnable = object : Runnable {
-                override fun run() {
-                    if (!autoActive) return
-                    val ic2 = currentInputConnection
-                    if (ic2 == null) { autoActive = false; return }
-                    val remaining = ic2.getTextBeforeCursor(1, 0)
-                    val fieldCleared = remaining.isNullOrEmpty()
-                    val timedOut = android.os.SystemClock.elapsedRealtime() - startTime >= maxWaitMs
-                    if (fieldCleared || timedOut) {
-                        autoLineIndex = nextIndex
-                        autoCharIndex = 0
-                        openBatchIfNeeded()
-                        autoRunnable?.let { handler.post(it) }
-                    } else {
-                        handler.postDelayed(this, pollIntervalMs)
-                    }
-                }
-            }
-            // اول همون فاصله‌ای که خودت تنظیم کردی رو رعایت می‌کنیم (برای حس و ریتم دلخواهت)،
-            // بعد شروع می‌کنیم به چک کردن خالی‌شدن واقعی کادر
-            handler.postDelayed(pollRunnable, enterDelayMs())
-        }
-
         fun finishItemAndAdvance(ic: InputConnection) {
             keyboardView.setAutoPressedKeyByCode(Keyboard.KEYCODE_DONE)
             closeBatchIfNeeded(ic)
@@ -205,7 +177,7 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
             val nextIndex = (autoLineIndex + 1) % autoItems.size
             prefs().edit().putInt("macro_line_index", nextIndex).apply()
 
-            val clearDelay = minOf(enterDelayMs(), 120L).coerceAtLeast(30L)
+            val clearDelay = minOf(enterDelayMs(), 120L)
             handler.postDelayed({ if (::keyboardView.isInitialized) keyboardView.setAutoPressedKeyByCode(null) }, clearDelay)
 
             if (!autoFullMode) { autoActive = false; return }
@@ -215,7 +187,17 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
                 if (autoRepeatsLeft <= 0) { autoActive = false; return }
             }
 
-            waitForFieldClearedThenAdvance(nextIndex)
+            autoLineIndex = nextIndex
+            autoCharIndex = 0
+
+            // یه فاصله‌ی ثابت و کوچیک (حداقل ۳۵ میلی‌ثانیه) قبل از پیام بعدی — بدون هیچ پرسش یا
+            // رفت‌وآمد اضافه‌ای با اپ مقصد. همین کافیه و روی گوشی‌های ضعیف هم سنگین نیست.
+            autoRunnable?.let {
+                handler.postDelayed({
+                    openBatchIfNeeded()
+                    it.run()
+                }, enterDelayMs())
+            }
         }
 
         autoRunnable = object : Runnable {
