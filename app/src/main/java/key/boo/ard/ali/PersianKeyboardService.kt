@@ -145,9 +145,10 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
         return raw.split("\n").filter { it.isNotBlank() }
     }
 
-    private fun typingSpeedMs(): Long = prefs().getInt("auto_speed_ms", 45).toLong().coerceAtLeast(0L)
+    private fun typingSpeedMs(): Long = prefs().getInt("auto_speed_ms", 15).toLong().coerceAtLeast(0L)
     private fun enterDelayMs(): Long = prefs().getInt("enter_delay_ms", 350).toLong().coerceAtLeast(0L)
     private fun repeatCount(): Int = prefs().getInt("auto_repeat_count", 1).coerceAtLeast(1)
+    private fun highlightDuringAuto(): Boolean = prefs().getBoolean("auto_show_highlight", false)
 
     private fun startAuto() {
         if (autoActive) return
@@ -162,14 +163,10 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
         autoRepeatsLeft = if (autoFullMode) repeatCount() else 1
 
         openBatchIfNeeded()
+        val showHighlight = highlightDuringAuto()
 
-        // نکته‌ی مهم: از اینجا به بعد، در کل مسیر تایپ خودکار، هیچ‌جا setAutoPressedKeyByCode
-        // (هایلایت بصری کلید) صدا زده نمی‌شه. این تنها چیزی بود که به رندر/FPS گوشی وابسته بود؛
-        // با حذفش، سرعت واقعی دیگه به قدرت گرافیک یا نرخ‌فریم گوشی گره نخورده — فقط منطق و
-        // ارتباط با اپ مقصده، که رو هر گوشی‌ای (حتی ضعیف) یکسان و قابل‌پیش‌بینیه.
-
-        // بعد از Enter، به‌جای فقط یه تاخیر ثابتِ حدسی، واقعاً از تلگرام می‌پرسیم کادر خالی شده یا نه —
-        // ولی این‌بار سبک: حداکثر چند تا چک با فاصله‌ی معقول، نه صدها بار در ثانیه.
+        // بعد از Enter، واقعاً از تلگرام می‌پرسیم کادر خالی شده یا نه (نه یه تاخیر حدسی) —
+        // همین جلوی قاطی‌شدن حروف بین دو پیام رو می‌گیره. سبک: حداکثر چند تا چک با فاصله‌ی معقول.
         fun waitForFieldClearedThenAdvance(nextIndex: Int) {
             val startTime = android.os.SystemClock.elapsedRealtime()
             val maxWaitMs = 300L
@@ -197,11 +194,18 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
         }
 
         fun finishItemAndAdvance(ic: InputConnection) {
+            // هایلایت بصری روی Enter — دقیقاً همون چیزی که می‌خواستی: کلید Enter هم واقعاً «کلیک» نشون داده بشه
+            if (showHighlight) keyboardView.setAutoPressedKeyByCode(Keyboard.KEYCODE_DONE)
             closeBatchIfNeeded(ic)
             sendRealEnter(ic)
 
             val nextIndex = (autoLineIndex + 1) % autoItems.size
             prefs().edit().putInt("macro_line_index", nextIndex).apply()
+
+            if (showHighlight) {
+                val clearDelay = minOf(enterDelayMs(), 120L)
+                handler.postDelayed({ if (::keyboardView.isInitialized) keyboardView.setAutoPressedKeyByCode(null) }, clearDelay)
+            }
 
             if (!autoFullMode) { autoActive = false; return }
 
@@ -221,9 +225,12 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
 
                 val currentItem = autoItems[autoLineIndex]
 
+                // تایپ واقعی و حرف‌به‌حرف، هم‌زمان با هایلایت روی همون کلید — دقیقاً چیزی که می‌خواستی:
+                // ببینی کلمات واقعاً روی کلیدها کلیک می‌شن، نه یه‌جا کپی‌پیست مصنوعی.
                 if (autoCharIndex < currentItem.length) {
                     val ch = currentItem[autoCharIndex]
                     ic.commitText(ch.toString(), 1)
+                    if (showHighlight) keyboardView.setAutoPressedKeyByCode(ch.code)
                     autoCharIndex++
                     handler.postDelayed(this, typingSpeedMs())
                     return
