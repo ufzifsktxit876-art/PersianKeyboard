@@ -60,6 +60,8 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
 
     private fun prefs() = getSharedPreferences("keyboard_prefs", MODE_PRIVATE)
 
+    private val keyboardCache = HashMap<String, Keyboard>()
+
     private fun loadKeyboardForCurrentSettings() {
         val p = prefs()
         currentLayoutId = p.getString("layout_mode", "CUSTOM") ?: "CUSTOM"
@@ -69,7 +71,10 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
             "PCBOARD" -> R.xml.keyboard_pcboard
             else -> R.xml.keyboard_persian_letters_medium
         }
-        val kb = Keyboard(this, resId)
+        // پردازش فایل XML چیدمان (Keyboard(...)) نسبتاً سنگینه؛ فقط یک‌بار برای هر چیدمان انجامش می‌دیم
+        // و نتیجه رو نگه می‌داریم. قبلاً هر بار که کیبورد باز می‌شد، از نو پردازش می‌شد — همون چیزی که
+        // باعث می‌شد فقط «اولین بار» کند به‌نظر برسه.
+        val kb = keyboardCache.getOrPut(currentLayoutId) { Keyboard(this, resId) }
         activeKeyboard = kb
         keyboardView.keyboard = kb
         keyboardView.userScale = p.getInt("keyboard_scale", 100) / 100f
@@ -270,4 +275,3 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
         ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
     }
 }
-
