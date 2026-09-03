@@ -20,7 +20,13 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
         set(value) { field = value.coerceIn(0.7f, 1.3f); requestLayout(); invalidate() }
 
     var keyboard: Keyboard? = null
-        set(value) { field = value; requestLayout(); invalidate() }
+        set(value) {
+            field = value
+            keyByCode = value?.keys?.associateBy { it.codes.getOrNull(0) ?: Int.MIN_VALUE } ?: emptyMap()
+            requestLayout(); invalidate()
+        }
+    // جدول جست‌وجوی سریع کد→کلید؛ فقط یک‌بار (وقتی چیدمان عوض می‌شه) ساخته می‌شه، نه هر حرف
+    private var keyByCode: Map<Int, Keyboard.Key> = emptyMap()
 
     var listener: OnKeyClickListener? = null
     private val handler = Handler(Looper.getMainLooper())
@@ -71,7 +77,7 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
 
     /** نسخه‌ی سبک: فقط ناحیه‌ی همون کلید رو invalidate می‌کنه، نه کل صفحه‌کلید. */
     fun setAutoPressedKeyByCode(code: Int?) {
-        val newKey = if (code == null) null else keyboard?.keys?.firstOrNull { it.codes.getOrNull(0) == code }
+        val newKey = if (code == null) null else keyByCode[code]
         val oldKey = pressedKey
         if (newKey === oldKey) return
         pressedKey = newKey
@@ -172,7 +178,10 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
                 val old = pressedKey
                 pressedKey = key
                 invalidateKeyRegion(old); invalidateKeyRegion(key)
-                if (key != null && key.repeatable) startRepeat(key)
+                // Enter/Done رو هم مثل بک‌اسپیس رفتار «نگه‌دار = تکرار» می‌دیم، حتی اگه توی فایل
+                // چیدمان XML به‌عنوان repeatable علامت نخورده باشه — نیازی به تغییر اون فایل نیست.
+                val code = key?.codes?.getOrNull(0)
+                if (key != null && (key.repeatable || code == Keyboard.KEYCODE_DONE)) startRepeat(key)
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
@@ -190,7 +199,11 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
                 val key = pressedKey
                 pressedKey = null
                 invalidateKeyRegion(key)
-                if (key != null && !key.repeatable) {
+                val code = key?.codes?.getOrNull(0)
+                // چون Enter (KEYCODE_DONE) بالا به‌عنوان repeatable رفتار کرد و حین نگه‌داشتن
+                // خودش چندبار شلیک شده، اینجا دیگه نباید یه‌بار دیگه هم اضافه بشه — وگرنه
+                // موقع برداشتن انگشت یه Enter اضافی می‌ره.
+                if (key != null && !key.repeatable && code != Keyboard.KEYCODE_DONE) {
                     key.codes.getOrNull(0)?.let { listener?.onKeyClicked(it) }
                 }
                 return true
