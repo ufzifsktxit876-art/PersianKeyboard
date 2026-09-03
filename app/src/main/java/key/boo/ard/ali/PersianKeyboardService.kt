@@ -165,32 +165,27 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
         openBatchIfNeeded()
         val showHighlight = highlightDuringAuto()
 
-        // بعد از Enter، واقعاً از تلگرام می‌پرسیم کادر خالی شده یا نه (نه یه تاخیر حدسی) —
-        // همین جلوی قاطی‌شدن حروف بین دو پیام رو می‌گیره. سبک: حداکثر چند تا چک با فاصله‌ی معقول.
+        // بعد از Enter، به‌جای حلقه‌ی پرسش مکرر (که خودش می‌تونست حس لگ بده)، فقط یک یا حداکثر دو بار
+        // چک سبک می‌کنیم که کادر خالی شده. برای لیست‌های کوتاه (که مورد استفاده‌ی توئه) این خیلی سبک‌تره.
         fun waitForFieldClearedThenAdvance(nextIndex: Int) {
-            val startTime = android.os.SystemClock.elapsedRealtime()
-            val maxWaitMs = 300L
-            val pollIntervalMs = 12L
-
-            val pollRunnable = object : Runnable {
-                override fun run() {
-                    if (!autoActive) return
-                    val ic2 = currentInputConnection
-                    if (ic2 == null) { autoActive = false; return }
-                    val remaining = ic2.getTextBeforeCursor(1, 0)
-                    val fieldCleared = remaining.isNullOrEmpty()
-                    val timedOut = android.os.SystemClock.elapsedRealtime() - startTime >= maxWaitMs
-                    if (fieldCleared || timedOut) {
-                        autoLineIndex = nextIndex
-                        autoCharIndex = 0
-                        openBatchIfNeeded()
-                        autoRunnable?.let { handler.post(it) }
-                    } else {
-                        handler.postDelayed(this, pollIntervalMs)
-                    }
-                }
+            fun advance() {
+                autoLineIndex = nextIndex
+                autoCharIndex = 0
+                openBatchIfNeeded()
+                autoRunnable?.let { handler.post(it) }
             }
-            handler.postDelayed(pollRunnable, enterDelayMs())
+            handler.postDelayed({
+                if (!autoActive) return@postDelayed
+                val ic2 = currentInputConnection
+                if (ic2 == null) { autoActive = false; return@postDelayed }
+                val stillHasText = !ic2.getTextBeforeCursor(1, 0).isNullOrEmpty()
+                if (!stillHasText) {
+                    advance()
+                } else {
+                    // فقط یک تلاش دوباره‌ی کوتاه، نه حلقه‌ی بی‌پایان — سبک و کافی برای متن‌های کوتاه
+                    handler.postDelayed({ advance() }, 15L)
+                }
+            }, enterDelayMs())
         }
 
         fun finishItemAndAdvance(ic: InputConnection) {
