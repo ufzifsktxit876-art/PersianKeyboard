@@ -48,7 +48,11 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
     private var repeatRunnable: Runnable? = null
     private var renderScale: Float = 1f
 
-    init { setLayerType(LAYER_TYPE_HARDWARE, null) }
+    // توجه: عمداً از LAYER_TYPE_HARDWARE استفاده نمی‌کنیم. اون حالت برای انیمیشن‌های کامل و پیوسته‌ی
+    // کل View خوبه، ولی برای تغییرات کوچیک و پی‌درپی مثل هایلایت تک‌کلید (خصوصاً روی گوشی‌های ضعیف
+    // با GPU کم‌قدرت)، نگه‌داری بافر جداگانه‌ی سخت‌افزاری خودش اضافه‌بار می‌سازه. حالت پیش‌فرض
+    // (LAYER_TYPE_NONE) همراه با invalidate جزئی، برای این الگو سبک‌تر و روان‌تره.
+    init { }
 
     fun setStyle(
         bgBitmap: Bitmap?, bgColor: Int,
@@ -223,3 +227,4 @@ class GKeyboardView(context: Context, attrs: AttributeSet?) : View(context, attr
         return null
     }
 }
+
