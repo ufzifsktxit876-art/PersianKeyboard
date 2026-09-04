@@ -22,6 +22,9 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
     private val handler = Handler(Looper.getMainLooper())
 
     private var autoActive = false
+    // شناسه‌ی هر اجرا؛ هر بار شروع/توقف عوض می‌شه تا callback های قدیمیِ جامونده (که می‌تونستن
+    // باعث پریدن/جابه‌جایی آیتم‌ها بشن) خودشون رو تشخیص بدن و کاری نکنن.
+    private var autoSession = 0
     private var autoItems: List<String> = emptyList()
     private var autoLineIndex = 0
     private var autoCharIndex = 0
@@ -60,8 +63,6 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
 
     private fun prefs() = getSharedPreferences("keyboard_prefs", MODE_PRIVATE)
 
-    private val keyboardCache = HashMap<String, Keyboard>()
-
     private fun loadKeyboardForCurrentSettings() {
         val p = prefs()
         currentLayoutId = p.getString("layout_mode", "CUSTOM") ?: "CUSTOM"
@@ -71,10 +72,7 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
             "PCBOARD" -> R.xml.keyboard_pcboard
             else -> R.xml.keyboard_persian_letters_medium
         }
-        // پردازش فایل XML چیدمان (Keyboard(...)) نسبتاً سنگینه؛ فقط یک‌بار برای هر چیدمان انجامش می‌دیم
-        // و نتیجه رو نگه می‌داریم. قبلاً هر بار که کیبورد باز می‌شد، از نو پردازش می‌شد — همون چیزی که
-        // باعث می‌شد فقط «اولین بار» کند به‌نظر برسه.
-        val kb = keyboardCache.getOrPut(currentLayoutId) { Keyboard(this, resId) }
+        val kb = Keyboard(this, resId)
         activeKeyboard = kb
         keyboardView.keyboard = kb
         keyboardView.userScale = p.getInt("keyboard_scale", 100) / 100f
@@ -161,6 +159,8 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
         if (items.isEmpty()) return
 
         autoActive = true
+        autoSession++
+        val mySession = autoSession
         autoItems = items
         autoLineIndex = prefs().getInt("macro_line_index", 0) % items.size
         autoCharIndex = 0
@@ -170,30 +170,34 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
         openBatchIfNeeded()
         val showHighlight = highlightDuringAuto()
 
-        // بعد از Enter، به‌جای حلقه‌ی پرسش مکرر (که خودش می‌تونست حس لگ بده)، فقط یک یا حداکثر دو بار
-        // چک سبک می‌کنیم که کادر خالی شده. برای لیست‌های کوتاه (که مورد استفاده‌ی توئه) این خیلی سبک‌تره.
+        // بعد از Enter، چند بار (نه فقط یکی) با فاصله‌ی کوتاه چک می‌کنیم کادر خالی شده یا نه.
+        // این تعادل بین سرعت و مطمئن‌بودنه: برای گوشی/شبکه‌ی معمولی همون چک اول کافیه (سریع)،
+        // ولی اگه گوشی داغ/کند بود یا شبکه لحظه‌ای کند شد، تا ۴ بار دیگه (هر بار ۲۰ میلی‌ثانیه)
+        // صبر می‌کنه قبل از شروع کلمه‌ی بعدی — دقیقاً همینجا بود که «حرف اول کلمه‌ی بعدی» گم می‌شد.
         fun waitForFieldClearedThenAdvance(nextIndex: Int) {
             fun advance() {
+                if (autoSession != mySession) return
                 autoLineIndex = nextIndex
                 autoCharIndex = 0
                 openBatchIfNeeded()
                 autoRunnable?.let { handler.post(it) }
             }
-            handler.postDelayed({
-                if (!autoActive) return@postDelayed
+            fun checkAttempt(attemptsLeft: Int) {
+                if (autoSession != mySession || !autoActive) return
                 val ic2 = currentInputConnection
-                if (ic2 == null) { autoActive = false; return@postDelayed }
+                if (ic2 == null) { autoActive = false; return }
                 val stillHasText = !ic2.getTextBeforeCursor(1, 0).isNullOrEmpty()
-                if (!stillHasText) {
+                if (!stillHasText || attemptsLeft <= 0) {
                     advance()
                 } else {
-                    // فقط یک تلاش دوباره‌ی کوتاه، نه حلقه‌ی بی‌پایان — سبک و کافی برای متن‌های کوتاه
-                    handler.postDelayed({ advance() }, 15L)
+                    handler.postDelayed({ checkAttempt(attemptsLeft - 1) }, 20L)
                 }
-            }, enterDelayMs())
+            }
+            handler.postDelayed({ checkAttempt(4) }, enterDelayMs())
         }
 
         fun finishItemAndAdvance(ic: InputConnection) {
+            if (autoSession != mySession) return
             // هایلایت بصری روی Enter — دقیقاً همون چیزی که می‌خواستی: کلید Enter هم واقعاً «کلیک» نشون داده بشه
             if (showHighlight) keyboardView.setAutoPressedKeyByCode(Keyboard.KEYCODE_DONE)
             closeBatchIfNeeded(ic)
@@ -204,7 +208,9 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
 
             if (showHighlight) {
                 val clearDelay = minOf(enterDelayMs(), 120L)
-                handler.postDelayed({ if (::keyboardView.isInitialized) keyboardView.setAutoPressedKeyByCode(null) }, clearDelay)
+                handler.postDelayed({
+                    if (autoSession == mySession && ::keyboardView.isInitialized) keyboardView.setAutoPressedKeyByCode(null)
+                }, clearDelay)
             }
 
             if (!autoFullMode) { autoActive = false; return }
@@ -219,7 +225,7 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
 
         autoRunnable = object : Runnable {
             override fun run() {
-                if (!autoActive) return
+                if (autoSession != mySession || !autoActive) return
                 val ic = currentInputConnection
                 if (ic == null) { autoActive = false; return }
 
@@ -275,3 +281,4 @@ class PersianKeyboardService : InputMethodService(), GKeyboardView.OnKeyClickLis
         ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
     }
 }
+
